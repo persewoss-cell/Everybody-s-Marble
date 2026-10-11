@@ -458,17 +458,25 @@
     return ['land', ...['villa', 'building', 'hotel'].filter((k) => pr.built[k])].map((k) => ICON[k]).join('');
   }
   // 땅·빌라·빌딩·호텔 4칸 (랜드마크면 하나로 합침), 관광지는 지금 단계 하나만
+  // 칸 아래 4칸 줄: 지은 것은 주인 색 + 아이콘, 안 지은 것은 회색. 랜드마크면 한 줄로 합침
   function quad(t, pr) {
-    if (t.kind === 'tour') return `<span class="quad one">${TOUR_ICON[G.tourLevel(state, t)]}</span>`;
-    if (pr.built.landmark) return '<span class="quad lm">🗼<em>랜드마크</em></span>';
-    return `<span class="quad">${['land', 'villa', 'building', 'hotel'].map((k) => `<i>${k === 'land' || pr.built[k] ? ICON[k] : ''}</i>`).join('')}</span>`;
+    if (t.kind === 'tour') {
+      const lv = G.tourLevel(state, t);
+      return `<span class="quad">${TOUR_ICON.map((ic, i) => `<i class="${i <= lv ? 'on' : ''}">${i <= lv ? ic : ''}</i>`).join('')}</span>`;
+    }
+    if (pr.built.landmark) return '<span class="quad lm">🗼 랜드마크</span>';
+    return `<span class="quad">${['land', 'villa', 'building', 'hotel'].map((k) => {
+      const on = k === 'land' || pr.built[k];
+      return `<i class="${on ? 'on' : ''}">${on ? ICON[k] : ''}</i>`;
+    }).join('')}</span>`;
   }
   function tileButton(t, attr) {
     const pr = prop(t.id);
     const owner = pr && player(pr.owner);
     return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <b>${esc(t.name)}</b>
-      ${owner ? quad(t, pr) : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
+      <span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>
+      ${owner ? quad(t, pr) : ''}
       <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}
     </button>`;
   }
