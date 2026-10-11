@@ -161,7 +161,7 @@ input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1p
 .winner .trophy { font-size: 64px; }
 .winner h2 { font-size: 26px; margin: 8px 0; }
 
-.conn { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--minus); color: #fff; }
+.conn { white-space: nowrap; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--minus); color: #fff; }
 
 .rules { font-size: 14px; line-height: 1.6; }
 .rules ul { padding-left: 18px; margin: 6px 0; }

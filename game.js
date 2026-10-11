@@ -1,6 +1,8 @@
+// 모두의 마블(보드게임) 돈 계산 규칙.
+// 브라우저(방장 기기)와 Node.js(테스트) 양쪽에서 씁니다.
+(function (root) {
 'use strict';
 
-// 모두의 마블(보드게임) 돈 계산 규칙.
 // 금액 단위는 "마블" 정수입니다. (화면에서는 '만' 단위로 입력/표시)
 const MAN = 10000;
 
@@ -403,7 +405,7 @@ function publicState(room) {
   };
 }
 
-module.exports = {
+const api = {
   MAN,
   DEFAULT_SETTINGS,
   MAX_PLAYERS,
@@ -415,3 +417,7 @@ module.exports = {
   sanitizeSettings,
   fmt,
 };
+
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+else root.MarbleGame = api;
+})(typeof self !== 'undefined' ? self : this);

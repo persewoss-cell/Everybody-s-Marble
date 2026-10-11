@@ -9,7 +9,6 @@
   // ---------- 상태 ----------
   let session = loadSession(); // { code, playerId, token, name }
   let state = null; // 서버에서 받은 방 상태
-  let es = null;
   let connected = false;
   let lastSeenTx = 0;
   let firstState = true;
@@ -72,68 +71,60 @@
     try { navigator.vibrate && navigator.vibrate(ms); } catch {}
   }
 
-  async function api(path, body) {
-    const res = await fetch(path, {
-      method: body ? 'POST' : 'GET',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    let data = {};
-    try { data = await res.json(); } catch {}
-    if (!res.ok) {
-      const err = new Error(data.error || '네트워크 오류가 발생했습니다.');
-      err.data = data;
-      throw err;
-    }
-    return data;
-  }
-
   async function act(action) {
-    return api(`/api/rooms/${session.code}/action`, { token: session.token, action });
+    if (!conn) throw new Error('아직 연결되지 않았습니다.');
+    return conn.act(action);
   }
 
   // ---------- 연결 ----------
-  function connect() {
-    if (es) es.close();
+  let hostAlive = true;
+  let conn = null;
+
+  function disconnect() {
+    if (conn) conn.close();
+    conn = null;
+  }
+
+  function goHome(msg) {
+    disconnect();
+    saveSession(null);
+    state = null;
+    history.replaceState(null, '', location.pathname);
+    if (msg) toast(msg, 'err');
+    render();
+  }
+
+  // client: 방 만들기/참가에서 이미 연결된 브로커 연결(있으면 재사용)
+  async function connect(client) {
+    disconnect();
     state = null;
     firstState = true;
+    connected = false;
     render();
-    es = new EventSource(`/api/rooms/${session.code}/events?token=${encodeURIComponent(session.token)}`);
-    es.onopen = () => { connected = true; renderConn(); };
-    es.onmessage = (ev) => {
-      connected = true;
-      const s = JSON.parse(ev.data);
-      onState(s);
-    };
-    es.onerror = async () => {
-      connected = false;
-      renderConn();
-      // 방이 없어졌거나 내보내진 경우 확인
-      try {
-        await api(`/api/rooms/${session.code}`);
-      } catch (e) {
-        if (e.data && e.data.code === 'NO_ROOM') {
-          es.close();
-          saveSession(null);
-          toast('방이 없어졌습니다.', 'err');
-          render();
-        }
-      }
-    };
+    const c = new MarbleNet.Connection(session, {
+      onState,
+      onStatus: (st) => {
+        connected = st.connected;
+        hostAlive = st.hostAlive;
+        renderConn();
+      },
+      onClosed: () => goHome('방장이 방을 닫았습니다.'),
+    });
+    conn = c;
+    try {
+      await c.open(client);
+    } catch (e) {
+      if (conn !== c) return;
+      if (e.data && e.data.code === 'NO_ROOM') return goHome(e.message);
+      // 연결 실패: 잠시 뒤 다시 시도
+      setTimeout(() => { if (conn === c && session) connect(); }, 3000);
+    }
   }
 
   function onState(s) {
     const prevStatus = state && state.status;
     state = s;
-    if (!me()) {
-      // 내보내짐
-      es && es.close();
-      saveSession(null);
-      state = null;
-      toast('방에서 나가게 되었습니다.', 'err');
-      render();
-      return;
-    }
+    if (!me()) return goHome('방에서 나가게 되었습니다.');
     // 새 거래 알림 (내 돈이 바뀐 거래)
     const newest = s.log.length ? s.log[s.log.length - 1].id : 0;
     if (!firstState) {
@@ -158,7 +149,7 @@
     if (!state) {
       $app.innerHTML = `${topbar()}<div class="wrap"><div class="card center">연결 중...</div>
         <button class="btn secondary" id="bk">처음으로</button></div>`;
-      $app.querySelector('#bk').onclick = () => { es && es.close(); saveSession(null); render(); };
+      $app.querySelector('#bk').onclick = () => goHome();
       return;
     }
     if (state.status === 'lobby') return renderLobby();
@@ -170,20 +161,26 @@
     const code = session ? session.code : '';
     return `<div class="topbar"><h1>🎲 모두의 마블 은행</h1>
       <div class="row" style="flex:none;align-items:center;gap:6px">
-        <span id="conn">${session && !connected && state ? '<span class="conn">재연결 중</span>' : ''}</span>
+        <span id="conn">${connHtml()}</span>
         ${code ? `<button class="code" id="share">${esc(code)}</button>` : ''}
       </div></div>`;
   }
+  function connHtml() {
+    if (!session || !state) return '';
+    if (!connected) return '<span class="conn">재연결 중</span>';
+    if (!hostAlive) return '<span class="conn">방장 연결 끊김</span>';
+    return '';
+  }
   function renderConn() {
     const el = document.getElementById('conn');
-    if (el) el.innerHTML = !connected && state ? '<span class="conn">재연결 중</span>' : '';
+    if (el) el.innerHTML = connHtml();
   }
   function bindShare() {
     const b = document.getElementById('share');
     if (b) b.onclick = share;
   }
   async function share() {
-    const url = `${location.origin}/?room=${session.code}`;
+    const url = MarbleNet.shareUrl(session);
     const text = `모두의 마블 은행 방 번호: ${session.code}\n${url}`;
     try {
       if (navigator.share) {
@@ -223,6 +220,10 @@
     </div>`;
     const $name = $app.querySelector('#name');
     const $err = $app.querySelector('#err');
+    const busy = (on, msg) => {
+      $app.querySelectorAll('button').forEach((b) => (b.disabled = on));
+      $err.textContent = on ? msg : '';
+    };
     const getName = () => {
       const n = $name.value.trim();
       if (!n) { $err.textContent = '이름을 입력해 주세요.'; $name.focus(); return null; }
@@ -232,22 +233,24 @@
     $app.querySelector('#create').onclick = async () => {
       const name = getName(); if (!name) return;
       try {
-        const r = await api('/api/rooms', { name });
-        saveSession({ ...r, name });
-        history.replaceState(null, '', `/?room=${r.code}`);
-        connect();
-      } catch (e) { $err.textContent = e.message; }
+        busy(true, '방을 만드는 중...');
+        const r = await MarbleNet.createRoom(name);
+        saveSession(r.session);
+        history.replaceState(null, '', MarbleNet.shareUrl(r.session));
+        connect(r.client);
+      } catch (e) { busy(false); $err.textContent = e.message; }
     };
     $app.querySelector('#join').onclick = async () => {
       const name = getName(); if (!name) return;
       const code = $app.querySelector('#code').value.trim();
       if (!/^\d{4}$/.test(code)) { $err.textContent = '방 번호 4자리를 입력해 주세요.'; return; }
       try {
-        const r = await api(`/api/rooms/${code}/join`, { name });
-        saveSession({ ...r, name });
-        history.replaceState(null, '', `/?room=${r.code}`);
-        connect();
-      } catch (e) { $err.textContent = e.message; }
+        busy(true, '방을 찾는 중...');
+        const r = await MarbleNet.joinRoom(code, name, MarbleNet.brokerFromIndex(params.get('b')));
+        saveSession(r.session);
+        history.replaceState(null, '', MarbleNet.shareUrl(r.session));
+        connect(r.client);
+      } catch (e) { busy(false); $err.textContent = e.message; }
     };
     $app.querySelector('#rules').onclick = showRules;
   }
@@ -290,6 +293,7 @@
       ${host
         ? `<button class="btn accent" id="start" ${state.players.length < 2 ? 'disabled' : ''}>게임 시작 (모두 ${fmt(state.settings.startMoney)} 지급)</button>`
         : '<div class="card center muted">방장이 게임을 시작하기를 기다리는 중...</div>'}
+      ${host ? '<div class="card muted">📱 방장 기기가 은행 역할을 해요. 게임하는 동안 <b>방장 휴대폰은 이 화면을 켜 둔 채로</b> 두세요. 잠깐 꺼져도 다시 켜면 이어집니다.</div>' : ''}
       <button class="btn secondary mt" id="leave">나가기</button>
     </div>`;
     bindShare();
@@ -302,12 +306,8 @@
       $app.querySelector('#start').onclick = () => run(() => act({ type: 'start' }));
     }
     $app.querySelector('#leave').onclick = () => confirmBox('방에서 나갈까요?', async () => {
-      await api(`/api/rooms/${session.code}/leave`, { token: session.token });
-      es && es.close();
-      saveSession(null);
-      state = null;
-      history.replaceState(null, '', '/');
-      render();
+      if (conn) await conn.leave();
+      goHome();
     });
   }
 
@@ -407,11 +407,8 @@
     bindShare();
     if (isHost()) $app.querySelector('#again').onclick = () => confirmBox('새 게임을 준비할까요? (기록이 지워집니다)', () => act({ type: 'reset' }));
     $app.querySelector('#home').onclick = () => {
-      es && es.close();
-      saveSession(null);
-      state = null;
-      history.replaceState(null, '', '/');
-      render();
+      if (isHost()) confirmBox('방을 닫을까요? 다른 사람들도 방에서 나가게 됩니다.', async () => { if (conn) await conn.leave(); goHome(); });
+      else goHome();
     };
   }
 
@@ -782,6 +779,19 @@
       </div>
       <button class="btn mt" data-close>닫기</button>`);
   }
+
+  // ---------- 화면 꺼짐 방지 ----------
+  let wakeLock = null;
+  async function keepAwake() {
+    try {
+      if (session && 'wakeLock' in navigator && !wakeLock && document.visibilityState === 'visible') {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => (wakeLock = null));
+      }
+    } catch {}
+  }
+  document.addEventListener('visibilitychange', keepAwake);
+  document.addEventListener('click', keepAwake);
 
   // ---------- 시작 ----------
   if (session) {

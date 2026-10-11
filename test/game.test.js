@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const g = require('../src/game');
+const g = require('../game');
 
 const M = g.MAN;
 

@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: everybodys-marble-bank
-    runtime: node
-    plan: free
-    buildCommand: "true"
-    startCommand: node server.js
