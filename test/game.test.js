@@ -4,203 +4,219 @@ const assert = require('node:assert');
 const g = require('../game');
 
 const M = g.MAN;
+const id = (name) => g.BOARD.find((t) => t.name === name).id;
 
 function setup(n = 3) {
-  const room = g.createRoom('1234', '방장', 'a', null);
-  if (n > 1) g.addPlayer(room, '둘', 'b');
-  if (n > 2) g.addPlayer(room, '셋', 'c');
+  const room = g.createRoom('1234', '엄마', 'a');
+  g.addPlayer(room, '아빠', 'b');
+  if (n > 2) g.addPlayer(room, '아들', 'c');
   g.applyAction(room, 'a', { type: 'start' });
+  room.festival = []; // 축제도시는 테스트마다 직접 정함
   return room;
 }
-const money = (room, id) => room.players.find((p) => p.id === id).money;
+const act = (room, who, type, extra) => g.applyAction(room, who, { type, ...extra });
+const money = (room, who) => room.players.find((p) => p.id === who).money;
+const give = (room, who, laps, cash) => Object.assign(room.players.find((p) => p.id === who), { laps, money: cash ?? 1000 * M });
 
-test('시작 자금과 월급', () => {
+test('보드: 일반도시 18곳, 관광지 섬 3 · 해변 2, 색 8가지', () => {
+  assert.strictEqual(g.BOARD.filter((t) => t.kind === 'city').length, 18);
+  assert.strictEqual(g.BOARD.filter((t) => t.tour === 'island').length, 3);
+  assert.strictEqual(g.BOARD.filter((t) => t.tour === 'beach').length, 2);
+  assert.strictEqual(new Set(g.BOARD.filter((t) => t.kind === 'city').map((t) => t.group)).size, 8);
+});
+
+test('시작 200만, 월급 30만과 턴, 월급 부스터 2배', () => {
   const room = setup();
   assert.strictEqual(money(room, 'a'), 200 * M);
-  g.applyAction(room, 'b', { type: 'salary' });
-  assert.strictEqual(money(room, 'b'), 230 * M);
+  assert.strictEqual(room.festival.length, 0);
+  act(room, 'a', 'salary');
+  act(room, 'a', 'salary', { booster: true });
+  assert.strictEqual(money(room, 'a'), 290 * M);
+  assert.strictEqual(room.players[0].laps, 2);
 });
 
-test('통행료: 독점 2배, 올림픽 배수 중첩', () => {
+test('턴 제한: 첫 턴 빌라, 두 번째 빌딩, 세 번째 호텔까지', () => {
   const room = setup();
-  g.applyAction(room, 'b', { type: 'toll', to: 'a', base: 10 * M, monopoly: true, olympics: 1 });
-  assert.strictEqual(money(room, 'b'), 160 * M);
-  assert.strictEqual(money(room, 'a'), 240 * M);
+  assert.throws(() => act(room, 'a', 'buy', { tileId: id('서울'), items: ['villa', 'building'] }), /빌라까지만/);
+  act(room, 'a', 'buy', { tileId: id('서울'), items: ['villa'] }); // 22+8 = 30만 (룰북 예시)
+  assert.strictEqual(money(room, 'a'), 170 * M);
+  give(room, 'a', 1);
+  assert.throws(() => act(room, 'a', 'build', { tileId: id('서울'), items: ['hotel'] }));
+  act(room, 'a', 'build', { tileId: id('서울'), items: ['building'] });
+  give(room, 'a', 2);
+  act(room, 'a', 'build', { tileId: id('서울'), items: ['hotel'] });
+  assert.throws(() => act(room, 'a', 'build', { tileId: id('서울'), items: ['landmark'] }));
+  give(room, 'a', 3);
+  act(room, 'a', 'build', { tileId: id('서울'), items: ['landmark'] });
 });
 
-test('인수: 건설가 2배, 랜드마크 불가', () => {
+test('룰북 예시: 방콕 통행료 3만5천 / 랜드마크까지 34만5천 / 호텔만 6만5천', () => {
   const room = setup();
-  g.applyAction(room, 'b', { type: 'takeover', to: 'c', value: 30 * M });
-  assert.strictEqual(money(room, 'b'), 140 * M);
-  assert.strictEqual(money(room, 'c'), 260 * M);
-  assert.throws(() => g.applyAction(room, 'b', { type: 'takeover', to: 'c', value: 30 * M, landmark: true }));
+  give(room, 'a', 3);
+  act(room, 'a', 'buy', { tileId: id('방콕'), items: ['villa', 'building'] });
+  assert.strictEqual(g.tollInfo(room, id('방콕')).amount, 3.5 * M);
+  assert.strictEqual(g.takeoverPrice(room, id('방콕')), 14 * M); // 인수비용 14만
+  act(room, 'a', 'build', { tileId: id('방콕'), items: ['hotel'] });
+  assert.strictEqual(g.takeoverPrice(room, id('방콕')), 26 * M); // 인수비용 26만
+  act(room, 'a', 'build', { tileId: id('방콕'), items: ['landmark'] });
+  assert.strictEqual(g.tollInfo(room, id('방콕')).amount, 34.5 * M);
+  assert.strictEqual(g.sellPrice(room, id('방콕')), 9.5 * M); // 매각비용 9만5천
+  act(room, 'a', 'buy', { tileId: id('베이징'), items: ['hotel'] });
+  // 베이징까지 가지면 연두 컬러독점 → 2배. 호텔만: (5천 + 6만) × 2
+  assert.strictEqual(g.tollInfo(room, id('베이징')).amount, 13 * M);
+  assert.strictEqual(g.fmt(6.5 * M), '6만 5천');
 });
 
-test('잔액 부족이면 거래되지 않음', () => {
+test('통행료 상승: 축제 ×2, 올림픽 ×2→×5, 한 곳에만', () => {
   const room = setup();
-  assert.throws(
-    () => g.applyAction(room, 'b', { type: 'payBank', amount: 300 * M }),
-    (e) => e.extra.code === 'INSUFFICIENT' && e.extra.shortfall === 100 * M,
-  );
-  assert.strictEqual(money(room, 'b'), 200 * M);
+  give(room, 'a', 0);
+  act(room, 'a', 'buy', { tileId: id('서울') }); // 땅 통행료 8만
+  act(room, 'a', 'buy', { tileId: id('파리') });
+  room.festival = [id('서울')];
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 16 * M);
+  act(room, 'a', 'olympic', { tileId: id('서울') });
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 32 * M); // 8 × 2 × 2
+  for (let i = 0; i < 3; i++) act(room, 'a', 'olympic', { tileId: id('서울') });
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 80 * M); // 8 × 2 × 5
+  assert.throws(() => act(room, 'a', 'olympic', { tileId: id('서울') }));
+  act(room, 'a', 'olympic', { tileId: id('파리') }); // 다른 도시로 옮기면 ×2부터
+  assert.deepStrictEqual(room.olympic, { tileId: id('파리'), count: 1 });
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 16 * M);
 });
 
-test('매각은 설정 비율만큼 받음', () => {
+test('통행료 내기, 천사 면제, 할인쿠폰 반값, 인수', () => {
   const room = setup();
-  g.applyAction(room, 'b', { type: 'sell', value: 40 * M });
-  assert.strictEqual(money(room, 'b'), 220 * M);
+  give(room, 'a', 1);
+  act(room, 'a', 'buy', { tileId: id('뉴욕'), items: ['villa', 'building'] }); // 통행료 7+15+32 = 54
+  act(room, 'b', 'toll', { tileId: id('뉴욕'), coupon: true });
+  assert.strictEqual(money(room, 'b'), 173 * M);
+  act(room, 'c', 'toll', { tileId: id('뉴욕'), angel: true });
+  assert.strictEqual(money(room, 'c'), 200 * M);
+  act(room, 'b', 'takeover', { tileId: id('뉴욕') }); // 40+16+48 = 104
+  assert.strictEqual(money(room, 'b'), 69 * M);
+  assert.strictEqual(room.props[id('뉴욕')].owner, 'b');
 });
 
-test('파산: 남은 돈은 채권자에게, 마지막 1명이 남으면 승리', () => {
+test('관광지: 섬은 보유 개수, 해변은 방문 횟수로 단계가 오르고 인수 불가', () => {
   const room = setup();
-  g.applyAction(room, 'b', { type: 'bankrupt', to: 'a' });
-  assert.strictEqual(money(room, 'a'), 400 * M);
-  assert.strictEqual(money(room, 'b'), 0);
+  act(room, 'a', 'buy', { tileId: id('독도') });
+  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 8 * M);
+  act(room, 'a', 'buy', { tileId: id('하와이') });
+  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 16 * M);
+  act(room, 'a', 'buy', { tileId: id('푸켓') });
+  assert.strictEqual(g.tollInfo(room, id('하와이')).amount, 32 * M);
+  assert.throws(() => act(room, 'b', 'takeover', { tileId: id('독도') }), /관광지는 인수/);
+  act(room, 'b', 'buy', { tileId: id('발리') });
+  act(room, 'c', 'toll', { tileId: id('발리') }); // 깃발 8만을 내고 파라솔로
+  assert.strictEqual(money(room, 'c'), 192 * M);
+  assert.strictEqual(g.tollInfo(room, id('발리')).amount, 16 * M);
+  act(room, 'b', 'arrive', { tileId: id('발리') }); // 주인 방문도 포함 → 방갈로
+  assert.strictEqual(g.tollInfo(room, id('발리')).amount, 32 * M);
+  assert.strictEqual(g.sellPrice(room, id('발리')), 5 * M);
+});
+
+test('잔액 부족: 통행료·세금만 매각 가능', () => {
+  const room = setup();
+  give(room, 'b', 0, 3 * M);
+  assert.throws(() => act(room, 'b', 'pay', { what: 'tax' }), (e) => e.extra.code === 'INSUFFICIENT' && e.extra.sellable);
+  assert.throws(() => act(room, 'b', 'pay', { what: 'travel' }), (e) => e.extra.code === 'INSUFFICIENT' && !e.extra.sellable);
+});
+
+test('포춘카드: 전염병·황사·정전, 방문하면 해제', () => {
+  const room = setup();
+  act(room, 'a', 'buy', { tileId: id('서울') });
+  act(room, 'a', 'buy', { tileId: id('뉴욕') }); // 빨강 독점 → 서울 땅 8 × 2 = 16
+  act(room, 'b', 'epidemic', { tileId: id('서울') });
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 8 * M);
+  assert.strictEqual(g.tollInfo(room, id('뉴욕')).amount, 7 * M);
+  act(room, 'b', 'dust', { tileId: id('서울') });
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 4 * M);
+  act(room, 'c', 'toll', { tileId: id('서울') }); // 방문하면 효과 해제
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 16 * M);
+  act(room, 'b', 'blackout', { tileId: id('뉴욕') });
+  assert.strictEqual(g.tollInfo(room, id('뉴욕')).amount, 0);
+});
+
+test('포춘카드: 지진·외계인 침공·강제매각·도시체인지·도시기부·후원금', () => {
+  const room = setup();
+  give(room, 'a', 3);
+  act(room, 'a', 'buy', { tileId: id('프라하'), items: ['villa', 'building', 'hotel'] });
+  act(room, 'a', 'buy', { tileId: id('베를린'), items: ['villa'] });
+  act(room, 'b', 'quake', { tileId: id('프라하') });
+  assert.strictEqual(room.props[id('프라하')].built.hotel, false);
+  act(room, 'b', 'alien', { tileId: id('베를린') });
+  assert.strictEqual(room.props[id('프라하')].built.building, false);
+  assert.strictEqual(room.props[id('베를린')].built.villa, false);
+  act(room, 'b', 'buy', { tileId: id('방콕') });
+  act(room, 'b', 'swap', { tileId: id('프라하'), mineId: id('방콕') });
+  assert.strictEqual(room.props[id('프라하')].owner, 'b');
+  assert.strictEqual(room.props[id('방콕')].owner, 'a');
+  const before = money(room, 'a');
+  act(room, 'c', 'forceSell', { tileId: id('방콕') });
+  assert.strictEqual(money(room, 'a'), before + 1 * M);
+  assert.strictEqual(room.props[id('방콕')], undefined);
+  act(room, 'b', 'donate', { tileId: id('프라하'), to: 'c' });
+  assert.strictEqual(room.props[id('프라하')].owner, 'c');
+  give(room, 'b', 0, 4 * M);
+  const c = money(room, 'c');
+  act(room, 'c', 'sponsor');
+  assert.strictEqual(money(room, 'c'), c + 14 * M); // 아빠는 4만뿐이라 4만만
+});
+
+test('랜드마크 도시는 인수·공격 불가, 도시기부는 가능', () => {
+  const room = setup();
+  give(room, 'a', 3);
+  act(room, 'a', 'buy', { tileId: id('로마'), items: ['villa', 'building', 'hotel'] });
+  act(room, 'a', 'build', { tileId: id('로마'), items: ['landmark'] });
+  assert.throws(() => act(room, 'b', 'takeover', { tileId: id('로마') }));
+  assert.throws(() => act(room, 'b', 'quake', { tileId: id('로마') }));
+  assert.throws(() => act(room, 'b', 'forceSell', { tileId: id('로마') }));
+  act(room, 'a', 'donate', { tileId: id('로마'), to: 'b' });
+});
+
+test('되돌리기: 가장 최근 거래부터, 땅과 턴까지 원래대로', () => {
+  const room = setup();
+  act(room, 'a', 'salary');
+  act(room, 'a', 'buy', { tileId: id('서울'), items: ['villa', 'building'] });
+  assert.throws(() => act(room, 'b', 'undo'), /엄마님 것/);
+  act(room, 'a', 'undo');
+  assert.strictEqual(room.props[id('서울')], undefined);
+  assert.strictEqual(money(room, 'a'), 230 * M);
+  assert.throws(() => act(room, 'b', 'undo')); // 남은 최근 거래(월급)도 엄마 것
+  act(room, 'a', 'undo');
+  assert.strictEqual(room.players[0].laps, 0);
+});
+
+test('승리독점 자동 판정과 파산', () => {
+  const room = setup();
+  for (const n of ['방콕', '베이징', '독도', '타이페이', '두바이']) act(room, 'a', 'buy', { tileId: id(n) });
+  give(room, 'a', 0);
   assert.strictEqual(room.status, 'playing');
-  g.applyAction(room, 'c', { type: 'bankrupt' });
+  act(room, 'a', 'buy', { tileId: id('카이로') });
+  assert.strictEqual(room.status, 'ended');
+  assert.strictEqual(room.result.reason, '라인 독점');
+  act(room, 'a', 'undo');
+  assert.strictEqual(room.status, 'playing');
+  act(room, 'b', 'buy', { tileId: id('서울') });
+  act(room, 'b', 'bankrupt', { to: 'a' });
+  assert.strictEqual(room.props[id('서울')], undefined);
+  act(room, 'c', 'bankrupt');
   assert.strictEqual(room.status, 'ended');
   assert.strictEqual(room.result.winnerId, 'a');
 });
 
-test('되돌리기: 본인 또는 방장만, 파산도 복구', () => {
-  const room = setup(2);
-  g.applyAction(room, 'b', { type: 'transfer', to: 'a', amount: 5 * M });
-  const tx = room.log[room.log.length - 1];
-  g.applyAction(room, 'b', { type: 'bankrupt', to: 'a' });
-  assert.strictEqual(room.status, 'ended');
-  const bk = room.log[room.log.length - 1];
-  g.applyAction(room, 'a', { type: 'undo', txId: bk.id });
-  assert.strictEqual(room.status, 'playing');
-  assert.strictEqual(money(room, 'b'), 195 * M);
-  g.applyAction(room, 'a', { type: 'undo', txId: tx.id });
-  assert.strictEqual(money(room, 'b'), 200 * M);
-  assert.throws(() => g.applyAction(room, 'a', { type: 'undo', txId: tx.id }));
+test('시간 종료면 마블이 가장 많은 사람 승리', () => {
+  const room = setup();
+  act(room, 'b', 'salary');
+  act(room, 'a', 'end', { reason: 'time' });
+  assert.strictEqual(room.result.winnerId, 'b');
 });
 
-test('방장 권한과 인원 제한', () => {
-  const room = g.createRoom('1', 'x', 'a', null);
-  g.addPlayer(room, 'b', 'b');
-  assert.throws(() => g.applyAction(room, 'b', { type: 'start' }));
-  g.addPlayer(room, 'c', 'c');
-  g.addPlayer(room, 'd', 'd');
-  assert.throws(() => g.addPlayer(room, 'e', 'e'));
-  assert.throws(() => g.addPlayer(room, 'b', 'f'));
-});
-
-test('금액 표시', () => {
-  assert.strictEqual(g.fmt(200 * M), '200만');
-  assert.strictEqual(g.fmt(12345 * M), '1억 2,345만');
-  assert.strictEqual(g.fmt(25000), '2.5만');
-});
-
-// ---- 도시 가격표 자동 계산 ----
-const city = (id, group, line, land) => ({
-  id, name: id, kind: 'city', group, line,
-  cost: { land, villa: 5 * M, building: 10 * M, hotel: 20 * M, landmark: 30 * M },
-  toll: { land: 2 * M, villa: 4 * M, building: 8 * M, hotel: 16 * M, landmark: 40 * M },
-});
-const tour = (id, line) => ({ id, name: id, kind: 'tour', line, cost: { land: 20 * M }, toll: { land: 10 * M } });
-const BOARD = [
-  city('a1', 0, 0, 10 * M), city('a2', 0, 1, 10 * M),
-  city('b1', 1, 2, 10 * M), city('b2', 1, 0, 10 * M),
-  city('c1', 2, 1, 10 * M), city('c2', 2, 2, 10 * M),
-  city('x0', 3, 0, 10 * M), city('x1', 3, 1, 10 * M), city('x2', 3, 2, 10 * M),
-  tour('t1', 3), tour('t2', 3),
-];
-function setupBoard() {
-  const room = g.createRoom('1', '방장', 'a', { startMoney: 1000 * M }, BOARD);
-  g.addPlayer(room, '둘', 'b');
-  g.addPlayer(room, '셋', 'c');
-  g.applyAction(room, 'a', { type: 'start' });
-  return room;
-}
-
-test('땅 구매와 건설, 통행료 자동 계산', () => {
-  const room = setupBoard();
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: 'a1', items: ['villa'] });
-  assert.strictEqual(money(room, 'a'), 985 * M);
-  assert.throws(() => g.applyAction(room, 'a', { type: 'buildTile', tileId: 'a1', items: ['landmark'] }));
-  g.applyAction(room, 'a', { type: 'buildTile', tileId: 'a1', items: ['building', 'hotel'] });
-  assert.strictEqual(money(room, 'a'), 955 * M);
-  g.applyAction(room, 'b', { type: 'payTollTile', tileId: 'a1' });
-  assert.strictEqual(money(room, 'b'), 970 * M); // 2+4+8+16 = 30
-  // 컬러 독점 → 2배, 올림픽 → 2배 더
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: 'a2' });
-  g.applyAction(room, 'a', { type: 'olympicTile', tileId: 'a1' });
-  assert.strictEqual(g.tollInfo(room, 'a1').amount, 120 * M);
-});
-
-test('인수: 건설가 2배로 땅과 건물을 가져오고, 랜드마크는 불가', () => {
-  const room = setupBoard();
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: 'b1', items: ['villa'] });
-  g.applyAction(room, 'b', { type: 'takeoverTile', tileId: 'b1' });
-  assert.strictEqual(money(room, 'b'), 970 * M); // (10+5)*2
-  assert.strictEqual(room.props.b1.owner, 'b');
-  g.applyAction(room, 'b', { type: 'buildTile', tileId: 'b1', items: ['building', 'hotel'] });
-  g.applyAction(room, 'b', { type: 'buildTile', tileId: 'b1', items: ['landmark'] });
-  assert.throws(() => g.applyAction(room, 'a', { type: 'takeoverTile', tileId: 'b1' }));
-});
-
-test('매각과 되돌리기', () => {
-  const room = setupBoard();
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: 'c1', items: ['villa', 'building'] });
-  g.applyAction(room, 'a', { type: 'sellTile', tileId: 'c1' });
-  assert.strictEqual(money(room, 'a'), (1000 - 25 + 12.5) * M);
-  assert.strictEqual(room.props.c1, undefined);
-  const tx = room.log[room.log.length - 1];
-  g.applyAction(room, 'a', { type: 'undo', txId: tx.id });
-  assert.strictEqual(room.props.c1.owner, 'a');
-  assert.strictEqual(money(room, 'a'), 975 * M);
-});
-
-test('트리플 독점 자동 승리, 취소하면 게임 계속', () => {
-  const room = setupBoard();
-  for (const id of ['a1', 'a2', 'b1', 'b2', 'c1']) g.applyAction(room, 'b', { type: 'buyTile', tileId: id });
-  assert.strictEqual(room.status, 'playing');
-  g.applyAction(room, 'b', { type: 'buyTile', tileId: 'c2' });
-  assert.strictEqual(room.status, 'ended');
-  assert.strictEqual(room.result.reason, '트리플 독점');
-  g.applyAction(room, 'a', { type: 'undo', txId: room.log[room.log.length - 1].id });
-  assert.strictEqual(room.status, 'playing');
-  assert.strictEqual(room.props.c2, undefined);
-});
-
-test('관광지 독점과 라인 독점', () => {
-  const room = setupBoard();
-  g.applyAction(room, 'c', { type: 'buyTile', tileId: 't1' });
-  g.applyAction(room, 'c', { type: 'buyTile', tileId: 't2' });
-  assert.strictEqual(room.status, 'ended');
-  assert.strictEqual(room.result.reason, '라인 독점'); // t1, t2가 같은 줄이라 라인 독점이 먼저
-});
-
-test('파산하면 땅은 은행으로', () => {
-  const room = setupBoard();
-  g.applyAction(room, 'b', { type: 'buyTile', tileId: 'a1' });
-  g.applyAction(room, 'b', { type: 'bankrupt', to: 'a' });
-  assert.strictEqual(room.props.a1, undefined);
-});
-
-test('실물 카드 기본 가격표', () => {
-  const room = g.createRoom('1', '방장', 'a', { startMoney: 1000 * M }, g.defaultBoard());
-  g.addPlayer(room, '둘', 'b');
-  g.applyAction(room, 'a', { type: 'start' });
-  const id = (name) => room.board.find((t) => t.name === name).id;
-  assert.strictEqual(room.board.length, 23);
-  assert.strictEqual(room.board.filter((t) => t.kind === 'tour').length, 5);
-  // 서울: 땅+빌라+빌딩+호텔 = 22+8+24+40 = 94만, 통행료 8+16+34+70 = 128만
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: id('서울'), items: ['villa', 'building', 'hotel'] });
-  assert.strictEqual(money(room, 'a'), 906 * M);
-  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 128 * M);
-  assert.strictEqual(g.takeoverPrice(room, id('서울')), 188 * M); // 카드 인수비용 44+16+48+80
-  assert.strictEqual(g.sellPrice(room, id('서울')), 47 * M); // 카드 매각비용 11+4+12+20
-  // 관광지: 단계별 통행료 8 → 16 → 32, 인수 불가
-  g.applyAction(room, 'a', { type: 'buyTile', tileId: id('독도') });
-  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 8 * M);
-  assert.throws(() => g.applyAction(room, 'a', { type: 'buildTile', tileId: id('독도'), items: ['bungalow'] }));
-  g.applyAction(room, 'a', { type: 'buildTile', tileId: id('독도'), items: ['parasol', 'bungalow'] });
-  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 32 * M);
-  assert.throws(() => g.applyAction(room, 'b', { type: 'takeoverTile', tileId: id('독도') }));
-  // 방콕 통행료 5천
-  g.applyAction(room, 'b', { type: 'buyTile', tileId: id('방콕') });
-  assert.strictEqual(g.fmt(g.tollInfo(room, id('방콕')).amount), '5천');
+test('다른 기기에서 미리 계산해도 방장과 같은 결과', () => {
+  const room = setup();
+  act(room, 'a', 'buy', { tileId: id('서울') });
+  const copy = g.roomFromPublic(g.publicState(room));
+  g.applyAction(copy, 'b', { type: 'toll', tileId: id('서울') });
+  g.applyAction(room, 'b', { type: 'toll', tileId: id('서울') });
+  assert.deepStrictEqual(g.publicState(copy).players, g.publicState(room).players);
 });

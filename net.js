@@ -222,11 +222,14 @@
       try {
         const room = H.room;
         if (req.kind === 'join') {
-          const id = rand(6);
-          G.addPlayer(room, req.name, id);
-          H.tokens[id] = rand(16);
+          // 같은 이름으로 다시 들어오면 그 사람으로 이어서 함 (튕겼을 때)
+          const old = G.findByName(room, req.name);
+          if (old && old.id === room.hostId) throw new G.GameError('방장 이름으로는 다른 기기에서 들어올 수 없어요. 방장 기기에서 다시 열어 주세요.');
+          const id = old ? old.id : rand(6);
+          if (!old) G.addPlayer(room, req.name, id);
+          if (!H.tokens[id]) H.tokens[id] = rand(16);
           room.updatedAt = Date.now();
-          res = { ok: true, playerId: id, token: H.tokens[id] };
+          res = { ok: true, playerId: id, token: H.tokens[id], rejoin: !!old };
         } else {
           const pid = Object.keys(H.tokens).find((k) => H.tokens[k] === req.token);
           if (!pid || !room.players.some((p) => p.id === pid)) {
@@ -348,7 +351,7 @@
   }
 
   // ---- 방 만들기 / 참가 ----
-  async function createRoom(name, board) {
+  async function createRoom(name) {
     let lastErr;
     for (const url of brokerList()) {
       let client;
@@ -364,7 +367,7 @@
         if (existing && existing.state) continue; // 이미 쓰는 번호
         const playerId = rand(6);
         const token = rand(16);
-        const room = G.createRoom(code, name, playerId, null, board);
+        const room = G.createRoom(code, name, playerId);
         saveHost(code, { room, tokens: { [playerId]: token }, seen: {}, rev: 0, epoch: rand(4) });
         const session = { code, broker: url, playerId, token, cid: rand(6), host: true, name };
         return { session, client };
@@ -376,6 +379,14 @@
   }
 
   async function joinRoom(code, name, brokerHint) {
+    // 이 기기가 그 방의 방장이었다면 방장으로 다시 엶
+    const H = loadHost(code);
+    if (H && H.room && H.room.players.some((p) => p.id === H.room.hostId && p.name === String(name).trim())) {
+      const url = brokerList(brokerHint)[0];
+      const client = await connectBroker(url, 6000);
+      const session = { code, broker: url, playerId: H.room.hostId, token: H.tokens[H.room.hostId], cid: rand(6), host: true, name };
+      return { session, client };
+    }
     let reachable = false;
     for (const url of brokerList(brokerHint)) {
       let client;
