@@ -1,0 +1,15 @@
+{
+  "name": "everybodys-marble-bank",
+  "version": "1.0.0",
+  "description": "모두의 마블 보드게임 돈 계산기 - 방을 만들고 각자 휴대폰으로 돈을 주고받기",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

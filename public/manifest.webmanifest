@@ -1,0 +1,9 @@
+{
+  "name": "모두의 마블 은행",
+  "short_name": "마블 은행",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1d2b53",
+  "theme_color": "#1d2b53",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
