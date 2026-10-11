@@ -883,6 +883,7 @@ const actions = {
   sell(room, actorId, a) {
     requirePlaying(room);
     const p = activePlayer(room, actorId);
+    requireTurn(room, p); // 앱으로만 하는 방은 내 차례에만
     const { tile, prop } = tileOf(room, a.tileId, 'owned');
     if (prop.owner !== p.id) throw new GameError('내 땅이 아닙니다.');
     const amount = sellPrice(room, tile.id);

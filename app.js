@@ -457,18 +457,30 @@
     if (pr.built.landmark) return ICON.landmark;
     return ['land', ...['villa', 'building', 'hotel'].filter((k) => pr.built[k])].map((k) => ICON[k]).join('');
   }
+  // 땅·빌라·빌딩·호텔 4칸 (랜드마크면 하나로 합침), 관광지는 지금 단계 하나만
+  function quad(t, pr) {
+    if (t.kind === 'tour') return `<span class="quad one">${TOUR_ICON[G.tourLevel(state, t)]}</span>`;
+    if (pr.built.landmark) return '<span class="quad lm">🗼<em>랜드마크</em></span>';
+    return `<span class="quad">${['land', 'villa', 'building', 'hotel'].map((k) => `<i>${k === 'land' || pr.built[k] ? ICON[k] : ''}</i>`).join('')}</span>`;
+  }
   function tileButton(t, attr) {
     const pr = prop(t.id);
     const owner = pr && player(pr.owner);
     return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <b>${esc(t.name)}</b>
-      <span class="tp">${owner ? builtIcons(t) : fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>
+      ${owner ? quad(t, pr) : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
       <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}
     </button>`;
   }
   // 그 칸에 있는 말 (오른쪽 위 동그라미)
+  function shownPos(p) {
+    if (p.id in anim.pos) return anim.pos[p.id];
+    const moving = (t) => t && t.actorId === p.id && !t.undone && t.from !== undefined && t.to !== undefined;
+    const waiting = [anim.current, ...anim.queue, ...state.log.filter((t) => t.id > anim.seen)].find(moving);
+    return waiting ? waiting.from : p.pos || 0;
+  }
   function piecesAt(pos) {
-    const here = state.players.filter((p) => !p.bankrupt && (p.id in anim.pos ? anim.pos[p.id] : p.pos || 0) === pos);
+    const here = state.players.filter((p) => !p.bankrupt && shownPos(p) === pos);
     return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
   }
   function spaceButton(sp, attr) {
@@ -520,6 +532,7 @@
         ${turnBar()}
         ${m.bankrupt ? '' : state.mode === 'app' ? `<div class="actions app">
           <button class="act" data-a="transfer">💸<span>송금</span></button>
+          <button class="act" data-a="sell">🏚️<span>매각</span></button>
           <button class="act" data-a="fortune">🃏<span>포춘카드 목록</span></button>
         </div>` : `<div class="actions">
           <button class="act" data-a="salary">🏁<span>월급 30만</span></button>
@@ -530,6 +543,7 @@
           <button class="act" data-a="bonus">🪙<span>보너스 게임</span></button>
           <button class="act" data-a="fortune">🃏<span>포춘카드</span></button>
           <button class="act" data-a="transfer">💸<span>송금</span></button>
+          <button class="act" data-a="sell">🏚️<span>매각</span></button>
         </div>`}
         <div class="card board"><div class="loghead"><span class="sub">도착한 칸을 누르세요${view === 'real' ? '' : ' · 🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전'}</span>
           <span class="row tight">${m.bankrupt ? '' : `<button class="btn small accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
@@ -785,6 +799,13 @@
       }, (root) => bindChoice(root, 'p', (v) => (to = v)));
     },
     fortune: () => fortuneDialog(),
+    sell() {
+      if (!myTiles().length) return toast('매각할 도시가 없어요.');
+      pickTile('🏚️ 매각할 내 도시', '매각하면 그 도시의 건물을 모두 치우고, 은행에서 매각비용을 받아요.', mineF, (id) => {
+        const t = G.TILE[id];
+        confirmBox(`${t.name}을(를) 매각하고 ${fmt(G.sellPrice(state, id))}을 받을까요?`, { type: 'sell', tileId: id }, '매각');
+      });
+    },
   };
 
   // 포춘카드 21종 (룰북 12쪽)
@@ -945,7 +966,7 @@
       case 'card': return fortuneDialog();
       case 'olympic': return myTiles().some((t) => t.kind === 'city') ? ACTIONS.olympic(pos) : toast('올림픽을 열 내 도시가 없어요.');
       case 'travel': return toast(state.mode === 'app' ? '세계여행! 다음 차례에 원하는 곳으로 가요.' : '세계여행 칸이에요.');
-      case 'tax': return ACTIONS.tax();
+      case 'tax': return autoTax();
     }
     return m;
   }
@@ -955,7 +976,7 @@
     const m = me();
     if (m.pendingCard) return keepPrompt();
     switch (key) {
-      case 'sponsor': return confirmBox('후원금! 모두에게서 10만씩 받아요.\n(10만이 없으면 가진 만큼)', { type: 'sponsor' }, '받기');
+      case 'sponsor': return run({ type: 'sponsor' }) && notice('🎁 후원금', `모두에게서 후원금을 받았어요. (10만이 없는 사람은 가진 만큼)`);
       case 'epidemic': return attack('epidemic', '😷 전염병', (t) => t.kind === 'city');
       case 'alien': return attack('alien', '👽 외계인 침공', (t) => t.kind === 'city');
       case 'forceSell': return attack('forceSell', '🔨 강제매각', noLm);
@@ -967,12 +988,21 @@
       case 'olympicHost': return ACTIONS.olympic();
       case 'goStart': return toast('출발지로! 월급을 받았어요. 내 도시를 눌러 건물을 지을 수 있어요.');
       case 'bonusGo': return ACTIONS.bonus();
-      case 'taxGo': return ACTIONS.tax();
+      case 'taxGo': return autoTax();
       case 'olympicTour': return state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.');
       case 'travelInvite': return toast('세계여행 칸으로! 다음 차례에 원하는 곳으로 가요.');
       case 'islandTrip': return toast('무인도로 이동했어요.');
       default: return toast(`${G.CARD[key].name} 카드를 보관했어요.`);
     }
+  }
+
+  // 반드시 내야 하는 돈은 묻지 않고 처리한 뒤 알려 줌
+  function notice(title, msg) {
+    openModal(`<h3>${title}</h3><p>${esc(msg)}</p><button class="btn accent wide" data-close>확인</button>`);
+    return true;
+  }
+  function autoTax() {
+    if (run({ type: 'pay', what: 'tax' }, { keepOpen: true })) notice('🧾 국세청', `세금 ${fmt(G.TAX)}을 납부했어요.`);
   }
 
   function keepPrompt() {
@@ -1030,7 +1060,7 @@
   }
 
   // ---------- 주사위 · 이동 · 카드 장면 (모든 기기에서 같이 보임) ----------
-  const anim = { pos: {}, busy: false, queue: [], seen: 0 };
+  const anim = { pos: {}, busy: false, queue: [], seen: 0, current: null };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const PIPS = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9] };
   const dieHtml = (n) => `<div class="die">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<i class="${PIPS[n].includes(i) ? 'on' : ''}"></i>`).join('')}</div>`;
@@ -1058,6 +1088,7 @@
     const tx = anim.queue.shift();
     if (!tx) return;
     anim.busy = true;
+    anim.current = tx;
     const who = state.players.find((p) => p.id === tx.actorId);
     const name = who ? who.name : '';
     try {
@@ -1066,6 +1097,9 @@
       if (tx.to !== undefined && tx.from !== undefined && tx.to !== tx.from) await walk(tx.actorId, tx.from, tx.to, tx.jump);
     } finally {
       anim.busy = false;
+      anim.current = null;
+      delete anim.pos[tx.actorId];
+      render();
     }
     if (tx.actorId === session.playerId && autoNext && !anim.queue.length) {
       autoNext = false;
@@ -1126,8 +1160,7 @@
       }
       await sleep(200);
     }
-    delete anim.pos[pid];
-    render();
+    anim.pos[pid] = to; // 끝날 때까지 도착 칸에 둠 (playNext가 마무리)
   }
 
   // ---------- 파산 / 방장 메뉴 ----------

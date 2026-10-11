@@ -355,3 +355,15 @@ test('앱 모드: 포춘카드 뽑기, 보관 카드는 1장, 방패로 공격 �
   act(room, 'a', 'draw', { pick: pick('goStart') });
   assert.strictEqual(room.players[0].pos, 0);
 });
+
+test('매각: 원할 때 할 수 있고, 앱으로만 하는 방은 내 차례에만', () => {
+  const room = appRoom();
+  act(room, 'b', 'buy', { tileId: id('서울') });
+  act(room, 'b', 'roll', { dice: [1, 2] });
+  act(room, 'b', 'endTurn');
+  assert.throws(() => act(room, 'b', 'sell', { tileId: id('서울') }), /엄마님 차례/);
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  act(room, 'b', 'sell', { tileId: id('서울') });
+  assert.strictEqual(money(room, 'b'), 219 * M); // 200 - 22 + 30(서울에서 출발지 통과) + 11
+});
