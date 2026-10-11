@@ -109,14 +109,14 @@
 
   // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
   const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust'];
-  function askEndTurn(tries) {
+  function askEndTurn(tries, title) {
     tries = tries || 0;
     if (tries > 100 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
     const t = state.turn;
     const m = me();
     if (!t || t.pid !== m.id || !t.rolled || t.again || m.travel || m.pendingCard) return;
-    if ($modal.innerHTML || anim.busy || anim.queue.length) return setTimeout(() => askEndTurn(tries + 1), 600);
-    openModal(`<h3>차례를 끝낼까요?</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
+    if ($modal.innerHTML || anim.busy || anim.queue.length) return setTimeout(() => askEndTurn(tries + 1, title), 600);
+    openModal(`<h3>${title || '차례를 끝낼까요?'}</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
       <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="yes">차례 끝</button></div>`, (root) => {
       root.querySelector('#yes').onclick = () => run({ type: 'endTurn' });
     });
@@ -668,8 +668,9 @@
 
     // 빈 땅 → 구매
     if (!pr) {
-      openModal(`${head}${priceTable(t)}
-        ${t.kind === 'city' ? `<div class="sub">같이 지을 건물</div>${buildChecks(t, null)}` : ''}
+      openModal(`${head}
+        ${t.kind === 'city' ? `<div class="buildbox"><div class="sub">같이 지을 건물</div>${buildChecks(t, null)}</div>` : ''}
+        ${priceTable(t)}
         <div class="err" id="err"></div>
         <div class="row"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="buy">구매 <span id="pv"></span></button></div>`, (root) => {
         const total = () => (t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land + checked(root).reduce((s, k) => s + t.cost[k], 0));
@@ -686,10 +687,11 @@
       const toll = G.tollInfo(state, t.id);
       const fx = state.effects[t.id];
       const checks = t.kind === 'city' ? buildChecks(t, pr) : '';
-      openModal(`${head}${priceTable(t)}
+      openModal(`${head}
+        ${checks ? `<div class="buildbox"><div class="sub">건물 짓기 (도착했을 때)</div>${checks}</div>` : ''}
+        ${priceTable(t)}
         <div class="preview"><span>지금 통행료</span><b>${fmt(toll.amount)}</b></div>
         ${toll.parts.length ? `<div class="sub">${toll.parts.join(' · ')}</div>` : ''}
-        ${checks ? `<div class="sub">건물 짓기 (도착했을 때)</div>${checks}` : ''}
         <div class="err" id="err"></div>
         <div class="row"><button class="btn secondary" data-close>닫기</button>
           ${t.tour === 'beach' || fx ? `<button class="btn secondary" id="arrive">도착 ${t.tour === 'beach' ? '(방문 +1)' : '(효과 해제)'}</button>` : ''}
@@ -1132,7 +1134,8 @@
     if (tx.actorId === session.playerId && autoNext && !anim.queue.length) {
       autoNext = false;
       if (tx.kind === 'fortune') handleDrawn(tx.card);
-      else if (tx.kind === 'roll' && tx.to !== tx.from && !/더블 3번/.test(tx.text)) openLanding(tx.to);
+      else if (tx.kind === 'roll' && me().jail > 0) askEndTurn(0, '🏝️ 무인도에 있어요. 할 일이 없으니 차례를 끝낼까요?');
+      else if (tx.kind === 'roll' && tx.to !== tx.from) openLanding(tx.to);
     }
     playNext();
   }
@@ -1249,21 +1252,41 @@
   }
 
   // ---------- 끝 화면 ----------
+  // 플레이어별 결과: 현금 + 땅·건물 가치(건설비용) = 총자산
+  function resultOf(p) {
+    const tiles = myTiles(p.id);
+    const value = tiles.reduce((sum, t) => sum + (t.kind === 'tour' ? G.TOUR_PRICE : G.builtItems(t, prop(t.id)).reduce((a, k) => a + t.cost[k], 0)), 0);
+    let monos = 0;
+    for (let g = 0; g < G.GROUPS.length; g++) if (G.hasMonopoly(state, p.id, g)) monos++;
+    return { tiles, value, total: p.money + value, monos };
+  }
   function renderEnded() {
     const r = state.result || {};
-    const rank = [...state.players].sort((a, b) => (a.id === r.winnerId ? -1 : b.id === r.winnerId ? 1 : (a.bankrupt - b.bankrupt) || b.money - a.money));
+    const res = Object.fromEntries(state.players.map((p) => [p.id, resultOf(p)]));
+    const rank = [...state.players].sort((a, b) => (a.id === r.winnerId ? -1 : b.id === r.winnerId ? 1 : (a.bankrupt - b.bankrupt) || res[b.id].total - res[a.id].total));
     const undoTx = G.lastUndoable(state);
     const canUndo = undoTx && (undoTx.actorId === session.playerId || isHost());
+    const w = player(r.winnerId);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
-      <div class="card winner"><div class="trophy">🏆</div><h2>${esc(player(r.winnerId).name)} 승리!</h2><div class="muted">${esc(r.reason || '')}</div></div>
-      <div class="card"><ul class="plist">${rank.map((p, i) => `<li><b>${i + 1}</b><span class="dot" style="background:${pc(p)}"></span>
-        <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}</span><span class="money">${p.bankrupt ? '파산' : fmt(p.money)}</span></li>`).join('')}</ul></div>
-      <div class="card"><div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${canUndo ? '' : 'disabled'}>↩ 되돌리기</button></div>${logHtml()}</div>
-      ${isHost() ? '<button class="btn accent" id="again">같은 사람들과 다시 하기</button>' : ''}
+      <div class="card winner" style="--pc:${pc(w)}"><div class="trophy">🏆</div><h2>${esc(w.name)} 승리!</h2>
+        <div class="reason">${esc(r.reason || '')}</div>
+        ${r.detail ? `<div class="sub">${esc(r.detail)}</div>` : ''}</div>
+      ${rank.map((p, i) => {
+        const x = res[p.id];
+        return `<div class="card result" style="--pc:${pc(p)}">
+          <div class="rhead"><b class="rank">${i + 1}</b><span class="dot" style="background:${pc(p)}"></span>
+            <b class="${p.bankrupt ? 'out' : ''}">${esc(p.name)}</b>${p.id === r.winnerId ? '<span class="tag now">승리</span>' : ''}${p.bankrupt ? '<span class="tag">파산</span>' : ''}
+            <span class="grow"></span><span class="total">${p.bankrupt ? '파산' : fmt(x.total)}</span></div>
+          ${p.bankrupt ? '' : `<div class="sub">현금 ${fmt(p.money)} + 땅·건물 ${fmt(x.value)} · 도시 ${x.tiles.length}곳${x.monos ? ` · 컬러독점 ${x.monos}곳` : ''}</div>
+          ${x.tiles.length ? `<div class="owned-list">${x.tiles.map((t) => `<span class="ot" style="--c:${tileColor(t)}">${esc(t.name)} ${builtIcons(t)}</span>`).join('')}</div>` : '<div class="muted">가진 도시 없음</div>'}`}
+        </div>`;
+      }).join('')}
+      ${canUndo ? '<div class="center mt"><button class="btn small secondary" id="undo">↩ 잘못 끝났으면 되돌리기</button></div>' : ''}
+      ${isHost() ? '<button class="btn accent mt" id="again">같은 사람들과 다시 하기</button>' : ''}
       <button class="btn secondary mt" id="home">처음으로</button>
     </div>`;
     bindTop();
-    $app.querySelector('#undo').onclick = undoDialog;
+    if ($app.querySelector('#undo')) $app.querySelector('#undo').onclick = undoDialog;
     if (isHost()) $app.querySelector('#again').onclick = () => confirmBox('새 게임을 준비할까요? (기록이 지워져요)', { type: 'reset' });
     $app.querySelector('#home').onclick = () => {
       if (isHost()) confirmBox('방을 닫을까요?', async () => { if (conn) await conn.leave(); goHome(); });

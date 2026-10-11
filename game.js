@@ -318,14 +318,25 @@ function sellPrice(room, tileId) {
 }
 
 // 승리독점: 트리플 / 라인 / 관광지
+// 승리 이유와 자세한 설명
 function winCheck(room, pid) {
-  let colors = 0;
-  for (let g = 0; g < GROUPS.length; g++) if (hasMonopoly(room, pid, g)) colors++;
-  if (colors >= 3) return '트리플 독점';
-  for (let l = 0; l < LINE_NAMES.length; l++) {
-    if (BOARD.filter((t) => t.line === l).every((t) => ownerOf(room, t.id) === pid)) return '라인 독점';
+  const names = (list) => list.map((t) => t.name).join(' · ');
+  const colors = [];
+  for (let g = 0; g < GROUPS.length; g++) if (hasMonopoly(room, pid, g)) colors.push(g);
+  if (colors.length >= 3) {
+    const detail = colors.map((g) => `${GROUPS[g].name}(${names(BOARD.filter((t) => t.kind === 'city' && t.group === g))})`).join(', ');
+    return { reason: '트리플 독점', detail: `같은 색 도시를 모두 가진 곳이 ${colors.length}곳 — ${detail}` };
   }
-  if (BOARD.filter((t) => t.kind === 'tour').every((t) => ownerOf(room, t.id) === pid)) return '관광지 독점';
+  for (let l = 0; l < LINE_NAMES.length; l++) {
+    const line = BOARD.filter((t) => t.line === l);
+    if (line.every((t) => ownerOf(room, t.id) === pid)) {
+      return { reason: '라인 독점', detail: `게임판 ${LINE_NAMES[l]}라인의 도시·관광지 ${line.length}곳을 모두 가짐 — ${names(line)}` };
+    }
+  }
+  const tours = BOARD.filter((t) => t.kind === 'tour');
+  if (tours.every((t) => ownerOf(room, t.id) === pid)) {
+    return { reason: '관광지 독점', detail: `관광지 ${tours.length}곳을 모두 가짐 — ${names(tours)}` };
+  }
   return null;
 }
 
@@ -381,10 +392,10 @@ function autoWin(room, ...pids) {
   for (const pid of pids) {
     const p = room.players.find((x) => x.id === pid);
     if (!p || p.bankrupt) continue;
-    const reason = winCheck(room, pid);
-    if (reason) {
+    const win = winCheck(room, pid);
+    if (win) {
       room.status = 'ended';
-      room.result = { winnerId: pid, reason, at: Date.now() };
+      room.result = { winnerId: pid, ...win, at: Date.now() };
       return;
     }
   }
@@ -394,7 +405,8 @@ function lastSurvivor(room) {
   const alive = room.players.filter((p) => !p.bankrupt);
   if (room.status === 'playing' && room.players.length > 1 && alive.length === 1) {
     room.status = 'ended';
-    room.result = { winnerId: alive[0].id, reason: '나머지 모두 파산', at: Date.now() };
+    const out = room.players.filter((p) => p.bankrupt).map((p) => p.name).join(', ');
+    room.result = { winnerId: alive[0].id, reason: '나머지 모두 파산', detail: `${out}님이 파산해서 혼자 남음`, at: Date.now() };
   }
 }
 
@@ -1097,11 +1109,11 @@ const actions = {
     requirePlaying(room);
     if (a.reason === 'time') {
       const rich = room.players.filter((p) => !p.bankrupt).sort((x, y) => y.money - x.money)[0];
-      room.result = { winnerId: rich.id, reason: '시간 종료 — 보유 마블 1등', at: Date.now() };
+      room.result = { winnerId: rich.id, reason: '시간 종료', detail: `게임 종료 시점에 보유 마블이 가장 많음 (${fmt(rich.money)})`, at: Date.now() };
     } else {
       const w = activePlayer(room, a.winnerId);
       const reasons = { triple: '트리플 독점', line: '라인 독점', tour: '관광지 독점' };
-      room.result = { winnerId: w.id, reason: reasons[a.reason] || '게임 종료', at: Date.now() };
+      room.result = { winnerId: w.id, reason: reasons[a.reason] || '게임 종료', detail: '방장이 승리를 선언했어요', at: Date.now() };
     }
     room.status = 'ended';
   },
