@@ -244,14 +244,20 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
    휴대폰: 옆(내 돈·버튼) → 게임판 → 아래(참가자·기록)
    태블릿 가로: 왼쪽 게임판(화면 높이에 꽉) | 오른쪽 옆 열, 그 아래에 참가자·기록 */
 .game { display: grid; gap: 8px; padding: 8px; max-width: 1500px; margin: 0 auto;
-  grid-template-areas: "side" "board" "bottom"; }
+  grid-template-areas: "side" "board" "players" "log"; }
 .g-board { grid-area: board; min-width: 0; }
 .g-side { grid-area: side; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.g-bottom { grid-area: bottom; display: grid; gap: 8px; align-items: start; }
+.g-players { grid-area: players; min-width: 0; }
+.g-players .card { margin: 0; }
+.g-log { grid-area: log; min-width: 0; margin: 0; display: flex; flex-direction: column; }
+.logscroll { max-height: 50vh; overflow-y: auto; }
 .g-side > * { margin: 0; }
-@media (min-width: 700px) { .g-bottom { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); } }
 @media (min-width: 820px) and (orientation: landscape) {
-  .game { grid-template-columns: auto minmax(240px, 1fr); grid-template-areas: "board side" "bottom bottom"; align-items: start; }
+  /* 기록은 게임판 맨 아래 줄까지만, 넘치면 스크롤 */
+  .game { grid-template-columns: auto minmax(240px, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas: "board side" "board players" "board log"; align-items: start; }
+  .g-log { align-self: stretch; min-height: 0; overflow: hidden; }
+  .logscroll { flex: 1; min-height: 0; max-height: none; }
   .game.real .rboard { width: min(calc(100vh - 62px), calc(100vw - 290px)); }
 }
 .me { background: var(--pc); color: #fff; border-radius: 12px; padding: 7px 12px; display: flex; flex-direction: column; }
@@ -285,7 +291,7 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 }
 .tile.sp { background: var(--chip); border-color: var(--line); }
 .tile:disabled { opacity: .3; }
-.lbl { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px; }
+.lbl { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px; }
 .lbl b { font-size: 12px; letter-spacing: -0.5px; white-space: nowrap; max-width: 100%; overflow: hidden; }
 .lbl .tp { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .lbl .tb { font-size: 10px; line-height: 1; }
@@ -347,4 +353,17 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 @media (min-width: 820px) and (orientation: landscape) {
   .game:not(.real) .board { width: min(calc(100vw - 300px), 1000px); }
   .game:not(.real) .tiles .tile { height: 78px; }
+}
+
+/* 건물 줄 아이콘이 진한 색 위에서도 잘 보이게 흰 테두리 */
+.quad i, .quad.lm { text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 1px #fff; }
+/* 말 위치: 칸 가운데에 크게, 반투명해서 이름도 보이게 */
+.pcs { inset: 0; top: 0; right: 0; max-width: none; align-items: center; justify-content: center; align-content: center; gap: 2px; pointer-events: none; }
+.pcs i { width: 46%; max-width: 30px; aspect-ratio: 1; height: auto; opacity: .62; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+.pcs:has(i + i) i { width: 34%; }
+.pcs:has(i + i + i) i { width: 28%; }
+.rboard .pcs i { width: clamp(10px, 46cqmin, 34px); height: auto; }
+.rboard .pcs:has(i + i) i { width: clamp(8px, 32cqmin, 24px); }
+@media (min-width: 820px) and (orientation: landscape) {
+  .game.real { height: calc(100vh - 46px); height: calc(100dvh - 46px); }
 }

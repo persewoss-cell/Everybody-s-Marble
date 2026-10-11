@@ -460,6 +460,7 @@
   // 땅·빌라·빌딩·호텔 4칸 (랜드마크면 하나로 합침), 관광지는 지금 단계 하나만
   // 칸 아래 4칸 줄: 지은 것은 주인 색 + 아이콘, 안 지은 것은 회색. 랜드마크면 한 줄로 합침
   function quad(t, pr) {
+    if (!pr) return `<span class="quad">${'<i></i>'.repeat(t.kind === 'tour' ? 3 : 4)}</span>`;
     if (t.kind === 'tour') {
       const lv = G.tourLevel(state, t);
       return `<span class="quad">${TOUR_ICON.map((ic, i) => `<i class="${i <= lv ? 'on' : ''}">${i <= lv ? ic : ''}</i>`).join('')}</span>`;
@@ -476,8 +477,8 @@
     return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <span class="lbl"><b>${esc(t.name)}</b>
         ${owner ? '' : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
-        <span class="tb">${tileBadges(t)}</span></span>
-      ${owner ? quad(t, pr) : ''}${piecesAt(t.pos)}
+        <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}</span>
+      ${quad(t, pr)}
     </button>`;
   }
   // 그 칸에 있는 말 (오른쪽 위 동그라미)
@@ -492,7 +493,7 @@
     return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
   }
   function spaceButton(sp, attr) {
-    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><span class="lbl"><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span></span>${piecesAt(sp.pos)}</button>`;
+    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><span class="lbl"><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span>${piecesAt(sp.pos)}</span></button>`;
   }
 
   let view = (() => { try { return localStorage.getItem('marble-view') || 'real'; } catch { return 'real'; } })();
@@ -550,7 +551,7 @@
         ${m.bankrupt ? '' : `<div class="actions ${state.mode === 'app' ? 'app' : ''}">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
         <div class="sub center">말이 도착한 칸을 누르세요</div>
       </section>
-      <section class="g-bottom">
+      <section class="g-players">
         <div class="card">
           <ul class="plist">${state.players.map((p) => {
             const turn = state.turn && state.turn.pid === p.id;
@@ -567,10 +568,10 @@
             ${m.bankrupt ? '' : '<button class="btn danger small" id="bankrupt">파산</button>'}
           </div>
         </div>
-        <div class="card">
-          <div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${canUndo ? '' : 'disabled'}>↩ 되돌리기</button></div>
-          ${logHtml()}
-        </div>
+      </section>
+      <section class="g-log card">
+        <div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${canUndo ? '' : 'disabled'}>↩ 되돌리기</button></div>
+        <div class="logscroll">${logHtml()}</div>
       </section>
     </div>`;
     bindTop();
