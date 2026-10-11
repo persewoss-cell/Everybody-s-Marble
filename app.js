@@ -705,8 +705,8 @@
         <div class="preview"><span>지금 통행료</span><b>${fmt(toll.amount)}</b></div>
         ${toll.parts.length ? `<div class="sub">${toll.parts.join(' · ')}</div>` : ''}
         <div class="err" id="err"></div>
-        <div class="row"><button class="btn secondary" data-close>닫기</button>
-          ${t.tour === 'beach' || fx ? `<button class="btn secondary" id="arrive">도착 ${t.tour === 'beach' ? '(방문 +1)' : '(효과 해제)'}</button>` : ''}
+        <div class="row">${t.kind === 'tour' ? '' : '<button class="btn secondary" data-close>닫기</button>'}
+          ${t.tour === 'beach' || fx ? `<button class="btn ${t.kind === 'tour' ? 'accent' : 'secondary'}" id="arrive">${t.tour === 'beach' ? '⛱️ 도착 · 방문 +1' : '도착 (효과 해제)'}</button>` : ''}
           ${checks ? '<button class="btn accent" id="build">건설 <span id="pv"></span></button>' : ''}</div>`, (root) => {
         const upd = () => { const el = root.querySelector('#pv'); if (el) el.textContent = fmt(checked(root).reduce((s, k) => s + t.cost[k], 0)); };
         root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = upd));
@@ -1000,7 +1000,27 @@
   function openLanding(pos) {
     const sp = G.SPACES[pos];
     if (!sp || me().bankrupt || state.status !== 'playing') return;
-    if (sp.kind !== 'special') return tileSheet(sp.id);
+    if (sp.kind !== 'special') {
+      const pr = prop(sp.id);
+      if (pr && pr.owner === session.playerId) {
+        if (sp.tour === 'beach' || state.effects[sp.id]) {
+          const before = sp.kind === 'tour' ? G.tourLevel(state, sp) : null;
+          run({ type: 'arrive', tileId: sp.id }, { keepOpen: true });
+          if (sp.kind === 'tour') {
+            const lv = G.tourLevel(state, sp);
+            endTitle = lv > before
+              ? `⛱️ ${sp.name} 방문 +1 → ${G.TOUR_LEVELS[lv]}(통행료 ${fmt(G.TOUR_TOLL[lv])})로 올랐어요. 차례를 끝낼까요?`
+              : `⛱️ ${sp.name}은(는) 이미 ${G.TOUR_LEVELS[lv]}예요. 차례를 끝낼까요?`;
+            return;
+          }
+        }
+        if (sp.kind === 'tour') {
+          endTitle = `🏝️ 내 관광지 ${sp.name}에 도착했어요. 차례를 끝낼까요?`;
+          return;
+        }
+      }
+      return tileSheet(sp.id);
+    }
     const m = me();
     switch (sp.key) {
       case 'start':
