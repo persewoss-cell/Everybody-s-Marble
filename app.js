@@ -474,10 +474,10 @@
     const pr = prop(t.id);
     const owner = pr && player(pr.owner);
     return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
-      <b>${esc(t.name)}</b>
-      <span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>
-      ${owner ? quad(t, pr) : ''}
-      <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}
+      <span class="lbl"><b>${esc(t.name)}</b>
+        ${owner ? '' : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
+        <span class="tb">${tileBadges(t)}</span></span>
+      ${owner ? quad(t, pr) : ''}${piecesAt(t.pos)}
     </button>`;
   }
   // 그 칸에 있는 말 (오른쪽 위 동그라미)
@@ -492,7 +492,7 @@
     return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
   }
   function spaceButton(sp, attr) {
-    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span>${piecesAt(sp.pos)}</button>`;
+    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><span class="lbl"><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span></span>${piecesAt(sp.pos)}</button>`;
   }
 
   let view = (() => { try { return localStorage.getItem('marble-view') || 'real'; } catch { return 'real'; } })();
@@ -530,50 +530,46 @@
     const host = isHost();
     const undoTx = G.lastUndoable(state);
     const canUndo = undoTx && (undoTx.actorId === m.id || host);
-    $app.innerHTML = `${topbar()}<div class="game">
-      <section>
+    const acts = state.mode === 'app'
+      ? [['transfer', '💸', '송금'], ['sell', '🏚️', '매각'], ['fortune', '🃏', '포춘카드']]
+      : [['salary', '🏁', '월급 30만'], ['bail', '🏝️', '보석금 20만'], ['tax', '🧾', '국세청 20만'], ['travel', '✈️', '세계여행 10만'], ['olympic', '🏅', '올림픽 10만'],
+        ['bonus', '🪙', '보너스 게임'], ['fortune', '🃏', '포춘카드'], ['transfer', '💸', '송금'], ['sell', '🏚️', '매각']];
+    $app.innerHTML = `${topbar()}<div class="game ${view}">
+      <section class="g-board">
+        <div class="board ${view === 'real' ? '' : 'card'}">${view === 'real' ? '' : '<div class="sub">🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전</div>'}${boardHtml()}</div>
+      </section>
+      <section class="g-side">
         <div class="me ${m.bankrupt ? 'bankrupt' : ''}" style="--pc:${pc(m)}">
           <div class="who">${esc(m.name)}${host ? ' · 방장' : ''} · ${m.bankrupt ? '파산' : `${m.laps + 1}번째 턴 (${G.ITEM_NAMES[G.maxBuilding(m)]}까지 건설)`}</div>
           <div class="bal">${fmt(m.money)} <small>마블</small></div>
           ${myStatus(m)}
         </div>
         ${turnBar()}
-        ${m.bankrupt ? '' : state.mode === 'app' ? `<div class="actions app">
-          <button class="act" data-a="transfer">💸<span>송금</span></button>
-          <button class="act" data-a="sell">🏚️<span>매각</span></button>
-          <button class="act" data-a="fortune">🃏<span>포춘카드 목록</span></button>
-        </div>` : `<div class="actions">
-          <button class="act" data-a="salary">🏁<span>월급 30만</span></button>
-          <button class="act" data-a="bail">🏝️<span>보석금 20만</span></button>
-          <button class="act" data-a="tax">🧾<span>국세청 20만</span></button>
-          <button class="act" data-a="travel">✈️<span>세계여행 10만</span></button>
-          <button class="act" data-a="olympic">🏅<span>올림픽 10만</span></button>
-          <button class="act" data-a="bonus">🪙<span>보너스 게임</span></button>
-          <button class="act" data-a="fortune">🃏<span>포춘카드</span></button>
-          <button class="act" data-a="transfer">💸<span>송금</span></button>
-          <button class="act" data-a="sell">🏚️<span>매각</span></button>
-        </div>`}
-        <div class="card board"><div class="loghead"><span class="sub">도착한 칸을 누르세요${view === 'real' ? '' : ' · 🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전'}</span>
-          <span class="row tight">${m.bankrupt ? '' : `<button class="btn small accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
-          <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></span></div>${boardHtml()}</div>
+        <div class="row ctrl">${m.bankrupt ? '' : `<button class="btn accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
+          <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
+        ${m.bankrupt ? '' : `<div class="actions ${state.mode === 'app' ? 'app' : ''}">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
+        <div class="sub center">말이 도착한 칸을 누르세요</div>
       </section>
-      <section>
+      <section class="g-bottom">
         <div class="card">
-          <ul class="plist">${state.players.map((p) => `<li>
+          <ul class="plist">${state.players.map((p) => {
+            const turn = state.turn && state.turn.pid === p.id;
+            return `<li class="${turn ? 'now' : ''}">
             <span class="dot" style="background:${pc(p)}"></span>
-            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}</span>
+            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
             <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
             <span class="money">${fmt(p.money)}</span>
-          </li>`).join('')}</ul>
+          </li>`;
+          }).join('')}</ul>
+          <div class="row mt">
+            ${host ? '<button class="btn secondary small" id="hostmenu">방장 메뉴</button>' : ''}
+            <button class="btn secondary small" id="rules">규칙 요약</button>
+            ${m.bankrupt ? '' : '<button class="btn danger small" id="bankrupt">파산</button>'}
+          </div>
         </div>
         <div class="card">
           <div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${canUndo ? '' : 'disabled'}>↩ 되돌리기</button></div>
           ${logHtml()}
-        </div>
-        <div class="row">
-          ${host ? '<button class="btn secondary small" id="hostmenu">방장 메뉴</button>' : ''}
-          <button class="btn secondary small" id="rules">규칙 요약</button>
-          ${m.bankrupt ? '' : '<button class="btn danger small" id="bankrupt">파산</button>'}
         </div>
       </section>
     </div>`;
