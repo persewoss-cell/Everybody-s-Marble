@@ -125,20 +125,79 @@ function requireHost(room, actorId) {
 
 // ---- 도시 가격표 / 땅 소유 ----
 // 도시 카드(도시증서)에 적힌 건설비와 통행료를 칸마다 입력해 두면 자동으로 계산합니다.
-// 통행료 = 지어진 것(땅·별장·빌딩·호텔·랜드마크) 통행료의 합 × 컬러 독점 배수 × 올림픽 배수
+// 도시 통행료 = 지어진 것(땅·빌라·빌딩·호텔·랜드마크) 통행료의 합 × 컬러 독점 배수 × 올림픽 배수
+// 관광지 통행료 = 지어진 가장 높은 단계(땅 → 파라솔 → 방갈로)의 통행료. 관광지는 인수할 수 없음(카드에 인수비용 없음)
 const ITEMS = ['land', 'villa', 'building', 'hotel', 'landmark'];
 const BUILDINGS = ['villa', 'building', 'hotel', 'landmark'];
-const ITEM_NAMES = { land: '땅', villa: '별장', building: '빌딩', hotel: '호텔', landmark: '랜드마크' };
+const TOUR_ITEMS = ['land', 'parasol', 'bungalow'];
+const TOUR_BUILDINGS = ['parasol', 'bungalow'];
+const ITEM_NAMES = { land: '땅', villa: '빌라', building: '빌딩', hotel: '호텔', landmark: '랜드마크', parasol: '파라솔', bungalow: '방갈로' };
+// 실물 카드 띠 색 기준 (값이 싼 도시부터)
 const GROUPS = [
-  { name: '빨강', color: '#e74c3c' },
-  { name: '주황', color: '#f39c12' },
-  { name: '노랑', color: '#f1c40f' },
-  { name: '초록', color: '#27ae60' },
-  { name: '하늘', color: '#5dade2' },
-  { name: '파랑', color: '#2e5cb8' },
-  { name: '보라', color: '#8e44ad' },
-  { name: '분홍', color: '#ec7ab8' },
+  { name: '연두', color: '#9ccc3c' },
+  { name: '초록', color: '#3fa34d' },
+  { name: '하늘', color: '#4fc3e8' },
+  { name: '파랑', color: '#3b82d6' },
+  { name: '분홍', color: '#e47fc0' },
+  { name: '보라', color: '#8e5bc4' },
+  { name: '주황', color: '#f59a23' },
+  { name: '다홍', color: '#e2582a' },
 ];
+
+function itemsOf(tile) {
+  return tile.kind === 'tour' ? TOUR_ITEMS : ITEMS;
+}
+function buildingsOf(tile) {
+  return tile.kind === 'tour' ? TOUR_BUILDINGS : BUILDINGS;
+}
+
+// 모두의 마블 보드게임 실물 도시 카드 가격 (단위: 만 마블)
+// [이름, 색 번호, 보드 줄, 건설비용(땅·빌라·빌딩·호텔·랜드마크), 통행료(땅·빌라·빌딩·호텔·랜드마크)]
+// 인수비용은 건설비용의 2배, 매각비용은 건설비용의 절반으로 카드와 같음
+const CARD_CITIES = [
+  ['방콕', 0, 0, [2, 1, 4, 6, 6], [0.5, 1, 2, 6, 25]],
+  ['베이징', 0, 0, [3, 1, 4, 6, 6], [0.5, 1, 2, 6, 25]],
+  ['독도', 'tour', 0],
+  ['타이페이', 1, 0, [4, 2, 6, 10, 10], [1, 2, 4, 12, 45]],
+  ['두바이', 1, 0, [4, 2, 6, 10, 10], [1, 2, 4, 12, 45]],
+  ['카이로', 1, 0, [6, 2, 6, 10, 10], [1, 2, 5, 13, 45]],
+  ['발리', 'tour', 1],
+  ['도쿄', 2, 1, [8, 4, 8, 16, 16], [2, 3, 8, 22, 60]],
+  ['시드니', 2, 1, [8, 4, 8, 16, 16], [2, 3, 8, 22, 60]],
+  ['하와이', 'tour', 1],
+  ['퀘벡', 3, 1, [10, 4, 12, 20, 20], [2, 5, 11, 27, 70]],
+  ['상파울로', 3, 1, [10, 4, 12, 20, 20], [3, 5, 12, 28, 70]],
+  ['프라하', 4, 2, [12, 4, 14, 24, 24], [3, 7, 17, 39, 75]],
+  ['푸켓', 'tour', 2],
+  ['베를린', 4, 2, [12, 4, 14, 24, 24], [3, 7, 17, 39, 75]],
+  ['모스크바', 5, 2, [14, 6, 18, 30, 30], [4, 8, 20, 46, 75]],
+  ['제네바', 5, 2, [14, 6, 18, 30, 30], [5, 9, 22, 47, 75]],
+  ['로마', 5, 2, [14, 6, 18, 30, 30], [5, 9, 22, 47, 75]],
+  ['타히티', 'tour', 3],
+  ['런던', 6, 3, [16, 8, 22, 36, 36], [5, 12, 28, 60, 70]],
+  ['파리', 6, 3, [18, 8, 22, 36, 36], [6, 13, 29, 62, 70]],
+  ['뉴욕', 7, 3, [20, 8, 24, 40, 40], [7, 15, 32, 68, 60]],
+  ['서울', 7, 3, [22, 8, 24, 40, 40], [8, 16, 34, 70, 60]],
+];
+// 관광지 카드: 건설비용 각 10만, 통행료 땅 8만 · 파라솔 16만 · 방갈로 32만
+const TOUR_COST = [10, 10, 10];
+const TOUR_TOLL = [8, 16, 32];
+
+function defaultBoard() {
+  return CARD_CITIES.map(([name, group, line, cost, toll], i) => {
+    const tour = group === 'tour';
+    const items = tour ? TOUR_ITEMS : ITEMS;
+    const c = tour ? TOUR_COST : cost;
+    const t = tour ? TOUR_TOLL : toll;
+    const tile = { id: 'c' + (i + 1), name, kind: tour ? 'tour' : 'city', line, cost: {}, toll: {} };
+    if (!tour) tile.group = group;
+    items.forEach((k, j) => {
+      tile.cost[k] = Math.round(c[j] * MAN);
+      tile.toll[k] = Math.round(t[j] * MAN);
+    });
+    return tile;
+  });
+}
 const LINES = 4;
 const MAX_TILES = 60;
 
@@ -161,7 +220,7 @@ function sanitizeBoard(input) {
     const line = Math.max(0, Math.min(LINES - 1, Math.round(Number(t.line) || 0)));
     const cost = {};
     const toll = {};
-    for (const k of kind === 'city' ? ITEMS : ['land']) {
+    for (const k of kind === 'city' ? ITEMS : TOUR_ITEMS) {
       cost[k] = moneyField(t.cost && t.cost[k]);
       toll[k] = moneyField(t.toll && t.toll[k]);
     }
@@ -179,8 +238,7 @@ function getTile(room, tileId) {
 
 function builtList(tile, prop) {
   if (!prop) return [];
-  if (tile.kind !== 'city') return ['land'];
-  return ['land', ...BUILDINGS.filter((k) => prop.built && prop.built[k])];
+  return ['land', ...buildingsOf(tile).filter((k) => prop.built && prop.built[k])];
 }
 
 // 현재 건설가 (땅 + 지어진 건물 가격의 합)
@@ -197,7 +255,10 @@ function tollInfo(room, tileId) {
   const tile = getTile(room, tileId);
   const prop = room.props[tileId];
   if (!prop) return { amount: 0, base: 0, parts: [] };
-  const base = builtList(tile, prop).reduce((sum, k) => sum + (tile.toll[k] || 0), 0);
+  const built = builtList(tile, prop);
+  const base = tile.kind === 'tour'
+    ? tile.toll[built[built.length - 1]] || 0
+    : built.reduce((sum, k) => sum + (tile.toll[k] || 0), 0);
   let mult = 1;
   const parts = [];
   if (tile.kind === 'city' && hasMonopoly(room, prop.owner, tile.group)) {
@@ -247,16 +308,18 @@ function snapshot(room, tileIds) {
 function pickBuildings(tile, prop, items) {
   const list = Array.isArray(items) ? [...new Set(items)] : [];
   if (!list.length) return [];
-  if (tile.kind !== 'city') throw new GameError('관광지에는 건물을 지을 수 없습니다.');
   for (const k of list) {
-    if (!BUILDINGS.includes(k)) throw new GameError('알 수 없는 건물입니다.');
+    if (!buildingsOf(tile).includes(k)) throw new GameError('알 수 없는 건물입니다.');
     if (prop && prop.built && prop.built[k]) throw new GameError(`${ITEM_NAMES[k]}은(는) 이미 지어져 있습니다.`);
   }
   if (list.includes('landmark')) {
     const ready = prop && prop.built && prop.built.villa && prop.built.building && prop.built.hotel;
     if (!ready) throw new GameError('랜드마크는 별장·빌딩·호텔이 모두 지어진 도시에 다시 도착했을 때 지을 수 있습니다.');
   }
-  return BUILDINGS.filter((k) => list.includes(k));
+  if (list.includes('bungalow') && !list.includes('parasol') && !(prop && prop.built && prop.built.parasol)) {
+    throw new GameError('방갈로는 파라솔을 지은 다음에 지을 수 있습니다.');
+  }
+  return buildingsOf(tile).filter((k) => list.includes(k));
 }
 
 function ownTile(room, actorId, tileId) {
@@ -314,7 +377,7 @@ function fmt(n) {
   if (eok && man) return `${sign}${eok}억 ${manStr}만`;
   if (eok) return `${sign}${eok}억`;
   if (n === 0) return '0';
-  if (n < MAN) return `${sign}${n.toLocaleString('ko-KR')}`;
+  if (n < MAN) return n % 1000 === 0 ? `${sign}${n / 1000}천` : `${sign}${n.toLocaleString('ko-KR')}`;
   return `${sign}${manStr}만`;
 }
 
@@ -533,6 +596,7 @@ const actions = {
     const prop = room.props[tile.id];
     if (!prop) throw new GameError('주인이 없는 땅입니다.');
     if (prop.owner === p.id) throw new GameError('자기 땅은 인수할 수 없습니다.');
+    if (tile.kind === 'tour') throw new GameError('관광지는 인수할 수 없습니다.');
     if (prop.built && prop.built.landmark) throw new GameError('랜드마크가 지어진 도시는 인수할 수 없습니다.');
     const owner = activePlayer(room, prop.owner);
     const amount = takeoverPrice(room, tile.id);
@@ -699,6 +763,11 @@ const api = {
   fmt,
   ITEMS,
   BUILDINGS,
+  TOUR_ITEMS,
+  TOUR_BUILDINGS,
+  itemsOf,
+  buildingsOf,
+  defaultBoard,
   ITEM_NAMES,
   GROUPS,
   LINES,

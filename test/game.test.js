@@ -179,3 +179,28 @@ test('파산하면 땅은 은행으로', () => {
   g.applyAction(room, 'b', { type: 'bankrupt', to: 'a' });
   assert.strictEqual(room.props.a1, undefined);
 });
+
+test('실물 카드 기본 가격표', () => {
+  const room = g.createRoom('1', '방장', 'a', { startMoney: 1000 * M }, g.defaultBoard());
+  g.addPlayer(room, '둘', 'b');
+  g.applyAction(room, 'a', { type: 'start' });
+  const id = (name) => room.board.find((t) => t.name === name).id;
+  assert.strictEqual(room.board.length, 23);
+  assert.strictEqual(room.board.filter((t) => t.kind === 'tour').length, 5);
+  // 서울: 땅+빌라+빌딩+호텔 = 22+8+24+40 = 94만, 통행료 8+16+34+70 = 128만
+  g.applyAction(room, 'a', { type: 'buyTile', tileId: id('서울'), items: ['villa', 'building', 'hotel'] });
+  assert.strictEqual(money(room, 'a'), 906 * M);
+  assert.strictEqual(g.tollInfo(room, id('서울')).amount, 128 * M);
+  assert.strictEqual(g.takeoverPrice(room, id('서울')), 188 * M); // 카드 인수비용 44+16+48+80
+  assert.strictEqual(g.sellPrice(room, id('서울')), 47 * M); // 카드 매각비용 11+4+12+20
+  // 관광지: 단계별 통행료 8 → 16 → 32, 인수 불가
+  g.applyAction(room, 'a', { type: 'buyTile', tileId: id('독도') });
+  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 8 * M);
+  assert.throws(() => g.applyAction(room, 'a', { type: 'buildTile', tileId: id('독도'), items: ['bungalow'] }));
+  g.applyAction(room, 'a', { type: 'buildTile', tileId: id('독도'), items: ['parasol', 'bungalow'] });
+  assert.strictEqual(g.tollInfo(room, id('독도')).amount, 32 * M);
+  assert.throws(() => g.applyAction(room, 'b', { type: 'takeoverTile', tileId: id('독도') }));
+  // 방콕 통행료 5천
+  g.applyAction(room, 'b', { type: 'buyTile', tileId: id('방콕') });
+  assert.strictEqual(g.fmt(g.tollInfo(room, id('방콕')).amount), '5천');
+});

@@ -40,7 +40,7 @@
     if (eok && man) return `${sign}${eok}억 ${manStr}만`;
     if (eok) return `${sign}${eok}억`;
     if (n === 0) return '0';
-    if (n < MAN) return `${sign}${n.toLocaleString('ko-KR')}`;
+    if (n < MAN) return n % 1000 === 0 ? `${sign}${n / 1000}천` : `${sign}${n.toLocaleString('ko-KR')}`;
     return `${sign}${manStr}만`;
   }
   function parseMan(v) {
@@ -604,7 +604,7 @@
     },
 
     buy() {
-      bankDialog('🏠 구매·건설', ['땅 구매', '별장 건설', '빌딩 건설', '호텔 건설', '랜드마크 건설', '관광지 구매'], 'payBank');
+      bankDialog('🏠 구매·건설', ['땅 구매', '빌라 건설', '빌딩 건설', '호텔 건설', '랜드마크 건설', '관광지 구매'], 'payBank');
     },
     payBank() {
       bankDialog('🏦 은행에 내기', ['세금(국세청)', '찬스카드', '올림픽 개최', '세계여행', '기타'], 'payBank');
@@ -796,15 +796,16 @@
         <b>준비</b><ul><li>2~4명. 모두 <b>200만 마블</b>씩 받고 시작합니다.</li><li>보드·말·주사위·카드는 실물로, 돈만 이 앱으로 주고받습니다.</li></ul>
         <b>월급</b><ul><li>출발지를 <b>지나갈 때마다 30만 마블</b> (세계여행으로 출발지를 지나도 받음).</li>
           <li>순간이동 카드로 출발지를 거치지 않으면 받지 않습니다.</li></ul>
-        <b>땅·건물</b><ul><li>빈 땅에 도착하면 카드에 적힌 가격으로 구매하고 별장·빌딩·호텔을 지을 수 있습니다 → <b>구매·건설</b>.</li>
-          <li>별장·빌딩·호텔이 모두 지어진 내 도시에 다시 오면 랜드마크를 지을 수 있습니다.</li></ul>
+        <b>땅·건물</b><ul><li>빈 땅에 도착하면 카드에 적힌 가격으로 구매하고 빌라·빌딩·호텔을 지을 수 있습니다 → <b>구매·건설</b>.</li>
+          <li>빌라·빌딩·호텔이 모두 지어진 내 도시에 다시 오면 랜드마크를 지을 수 있습니다.</li></ul>
         <b>통행료</b><ul><li>다른 사람 땅에 도착하면 카드의 통행료(지어진 건물 기준)를 땅 주인에게 냅니다.</li>
           <li>같은 색 도시를 모두 가지면(컬러 독점) <b>통행료 2배</b>, 올림픽이 열린 도시는 <b>배수가 추가</b>되고 효과는 겹칩니다.</li></ul>
         <b>인수</b><ul><li>통행료를 낸 뒤 그 땅을 <b>현재 건설가의 2배</b>를 주인에게 주고 인수할 수 있습니다.</li>
           <li><b>랜드마크가 있는 도시는 인수할 수 없습니다.</b> 인수한 뒤에는 추가로 건물을 지을 수 있습니다.</li></ul>
         <b>🗺️ 도시 가격표 (자동 계산)</b><ul><li>방장이 도시 카드에 적힌 건설비와 통행료를 한 번 입력해 두면, 칸을 눌러 구매·건설·통행료·인수·매각을 자동으로 계산해요.</li>
-          <li>통행료 = 지어진 것(땅·별장·빌딩·호텔·랜드마크)의 통행료 합 × 컬러 독점 × 올림픽</li>
-          <li>트리플·라인·관광지 독점이 되면 자동으로 승리 처리돼요.</li></ul>
+          <li>통행료 = 지어진 것(땅·빌라·빌딩·호텔·랜드마크)의 통행료 합 × 컬러 독점 × 올림픽</li>
+          <li>트리플·라인·관광지 독점이 되면 자동으로 승리 처리돼요.</li>
+          <li>관광지: 땅·파라솔·방갈로 각 10만, 통행료는 지어진 단계에 따라 8만 → 16만 → 32만. 관광지는 인수할 수 없어요.</li></ul>
         <b>무인도</b><ul><li>3턴 동안 갇힙니다. 더블이 나오거나, <b>보석금</b>을 내거나, 탈출 카드를 쓰면 나옵니다.</li></ul>
         <b>파산</b><ul><li>돈이 모자라면 땅·건물을 은행에 팔아 마련합니다. 그래도 모자라면 파산하고, 부족한 금액은 내지 않습니다.</li></ul>
         <b>승리</b><ul><li><b>트리플 독점</b>: 컬러 독점 3곳 (관광지는 포함 안 됨)</li>
@@ -817,7 +818,7 @@
 
   // ---------- 도시 가격표 / 땅 ----------
   const G = window.MarbleGame;
-  const ICON = { land: '🚩', villa: '🏠', building: '🏢', hotel: '🏨', landmark: '🗼' };
+  const ICON = { land: '🚩', villa: '🏠', building: '🏢', hotel: '🏨', landmark: '🗼', parasol: '⛱️', bungalow: '🛖' };
   const LINE_NAMES = ['1번째 줄', '2번째 줄', '3번째 줄', '4번째 줄'];
 
   function board() { return (state && state.board) || []; }
@@ -828,8 +829,7 @@
   function myTiles(pid) { return board().filter((t) => props()[t.id] && props()[t.id].owner === pid); }
   function builtIcons(t, pr) {
     if (!pr) return '';
-    if (t.kind === 'tour') return '🏖️';
-    return ['land', ...G.BUILDINGS.filter((k) => pr.built && pr.built[k])].map((k) => ICON[k]).join('') + (pr.olympic ? `🏅${pr.olympic > 1 ? '×' + pr.olympic : ''}` : '');
+    return ['land', ...G.buildingsOf(t).filter((k) => pr.built && pr.built[k])].map((k) => ICON[k]).join('') + (pr.olympic ? `🏅${pr.olympic > 1 ? '×' + pr.olympic : ''}` : '');
   }
   function monopolyCount(pid) {
     let n = 0;
@@ -838,7 +838,12 @@
   }
 
   function loadTemplate() {
-    try { return JSON.parse(localStorage.getItem('marble-board')) || []; } catch { return []; }
+    // 직접 고친 가격표가 없으면 실물 카드 가격을 씀
+    try {
+      const b = JSON.parse(localStorage.getItem('marble-board'));
+      if (Array.isArray(b) && b.length) return b;
+    } catch {}
+    return G.defaultBoard();
   }
   function saveTemplate(b) {
     try { localStorage.setItem('marble-board', JSON.stringify(b)); } catch {}
@@ -884,23 +889,23 @@
   }
 
   function priceTable(t) {
-    const items = t.kind === 'city' ? G.ITEMS : ['land'];
+    const items = G.itemsOf(t);
     const pr = props()[t.id];
     return `<table class="ptable"><tr><th></th><th>건설비</th><th>통행료</th></tr>
       ${items.map((k) => `<tr class="${pr && (k === 'land' || (pr.built && pr.built[k])) ? 'have' : ''}">
-        <td>${t.kind === 'tour' ? '🏖️ 관광지' : ICON[k] + ' ' + G.ITEM_NAMES[k]}</td><td>${fmt(t.cost[k])}</td><td>${fmt(t.toll[k])}</td></tr>`).join('')}
+        <td>${ICON[k]} ${G.ITEM_NAMES[k]}</td><td>${fmt(t.cost[k])}</td><td>${fmt(t.toll[k])}</td></tr>`).join('')}
     </table>`;
   }
 
   function buildChecks(t, pr) {
-    if (t.kind !== 'city') return '';
     const built = (pr && pr.built) || {};
     const ready = built.villa && built.building && built.hotel;
-    return G.BUILDINGS.filter((k) => !built[k]).map((k) => {
+    return G.buildingsOf(t).filter((k) => !built[k]).map((k) => {
       const disabled = k === 'landmark' && !ready;
       return `<label class="check ${disabled ? 'muted' : ''}"><input type="checkbox" data-item="${k}" ${disabled ? 'disabled' : ''}>
         ${ICON[k]} ${G.ITEM_NAMES[k]} <span class="muted">${fmt(t.cost[k])}</span>
-        ${disabled ? '<small>(별장·빌딩·호텔이 모두 있어야 함)</small>' : ''}</label>`;
+        ${disabled ? '<small>(빌라·빌딩·호텔이 모두 있어야 함)</small>' : ''}
+        ${k === 'bungalow' && !built.parasol ? '<small>(파라솔과 함께 또는 그 다음에)</small>' : ''}</label>`;
     }).join('');
   }
 
@@ -918,7 +923,7 @@
 
     if (!pr) {
       openModal(`${head}${priceTable(t)}
-        ${t.kind === 'city' ? '<div class="sub mt">같이 지을 건물</div>' + buildChecks(t, null) : ''}
+        <div class="sub mt">같이 지을 건물</div>${buildChecks(t, null)}
         <div class="preview"><span>낼 금액</span><b id="pv">${fmt(t.cost.land)}</b></div>
         <div class="err" id="err"></div>
         <button class="btn accent" id="buy">구매하기</button>${back}`, (root) => {
@@ -936,7 +941,7 @@
       openModal(`${head}${priceTable(t)}
         <div class="preview"><span>지금 이 땅 통행료</span><b>${fmt(toll.amount)}</b></div>
         ${toll.parts.length ? `<div class="sub">${fmt(toll.base)} ${toll.parts.join(' ')}</div>` : ''}
-        ${t.kind === 'city' && !(pr.built && pr.built.landmark) ? `<div class="sub mt">추가로 지을 건물</div>${buildChecks(t, pr)}
+        ${G.buildingsOf(t).some((k) => !(pr.built && pr.built[k])) ? `<div class="sub mt">추가로 지을 건물</div>${buildChecks(t, pr)}
           <div class="preview"><span>건설비</span><b id="pv">0</b></div>
           <button class="btn accent" id="build">건설하기</button>` : ''}
         <div class="err" id="err"></div>
@@ -958,14 +963,14 @@
 
     // 다른 사람 땅
     const toll = G.tollInfo(state, t.id);
-    const canTake = !(pr.built && pr.built.landmark);
+    const canTake = t.kind === 'city' && !(pr.built && pr.built.landmark);
     const price = G.takeoverPrice(state, t.id);
     openModal(`${head}${priceTable(t)}
       <div class="preview"><span>낼 통행료</span><b>${fmt(toll.amount)}</b></div>
       ${toll.parts.length ? `<div class="sub">${fmt(toll.base)} ${toll.parts.join(' ')}</div>` : ''}
       <div class="err" id="err"></div>
       <button class="btn" id="pay">🧾 ${esc(owner.name)}에게 통행료 내기</button>
-      ${canTake ? `<button class="btn secondary mt" id="take">🤝 인수하기 (${fmt(price)})</button>` : '<div class="sub mt center">🗼 랜드마크가 있어 인수할 수 없어요</div>'}
+      ${canTake ? `<button class="btn secondary mt" id="take">🤝 인수하기 (${fmt(price)})</button>` : `<div class="sub mt center">${t.kind === 'tour' ? '🏖️ 관광지는 인수할 수 없어요' : '🗼 랜드마크가 있어 인수할 수 없어요'}</div>`}
       ${back}`, (root) => {
       root.querySelector('#pay').onclick = async () => {
         const ok = await run(() => act({ type: 'payTollTile', tileId: t.id }), root, owner.id);
@@ -1001,10 +1006,11 @@
         <span class="name">${esc(t.name)} <span class="tag">${t.kind === 'tour' ? '관광지' : G.GROUPS[t.group].name}</span><span class="tag">${t.line + 1}줄</span></span>
         <span class="muted">${fmt(t.cost.land)}</span></li>`).join('');
       openModal(`<h3>🗺️ 도시 가격표</h3>
-        <div class="sub">${host ? '도시 카드(도시증서)에 적힌 건설비와 통행료를 보드 순서대로 넣어 주세요. 이 기기에 저장되어 다음 게임에도 쓰여요.' : '방장이 입력한 가격표예요.'}</div>
+        <div class="sub">${host ? '실물 도시 카드 가격이 들어 있어요. 판본이 달라 가격이 다르면 고쳐 주세요. 고친 가격표는 이 기기에 저장되어 다음 게임에도 쓰여요.' : '방장이 입력한 가격표예요.'}</div>
         <ul class="plist editable">${rows || '<li class="muted">아직 칸이 없어요.</li>'}</ul>
         ${host ? `<div class="row mt"><button class="btn secondary" id="addc">+ 도시</button><button class="btn secondary" id="addt">+ 관광지</button></div>
           <div class="row mt"><button class="btn secondary" id="exp">내보내기</button><button class="btn secondary" id="imp">가져오기</button></div>
+          <button class="btn secondary mt" id="def">실물 카드 가격으로 되돌리기</button>
           <div class="err" id="err"></div>
           <div class="row mt"><button class="btn secondary" data-close>취소</button><button class="btn accent" id="save">저장</button></div>`
           : '<button class="btn secondary mt" data-close>닫기</button>'}`, (root) => {
@@ -1024,6 +1030,7 @@
           catch { prompt('이 내용을 복사하세요', text); }
         };
         root.querySelector('#imp').onclick = () => importBoard((b) => { draft = b; show(); });
+        root.querySelector('#def').onclick = () => { draft = G.defaultBoard(); show(); toast('실물 카드 가격을 불러왔어요. 저장을 눌러야 적용돼요.'); };
         root.querySelector('#save').onclick = async () => {
           try {
             const clean = G.sanitizeBoard(draft);
@@ -1040,7 +1047,7 @@
 
     const tileForm = (i, isNew) => {
       const t = draft[i];
-      const items = () => (t.kind === 'city' ? G.ITEMS : ['land']);
+      const items = () => G.itemsOf(t);
       const field = (k, which) => `<input type="number" inputmode="decimal" step="any" min="0" data-f="${which}.${k}" value="${t[which] && t[which][k] ? t[which][k] / MAN : ''}" placeholder="0">`;
       openModal(`<h3>${isNew ? '칸 추가' : '칸 수정'}</h3>
         <label class="field"><span>이름</span><input type="text" id="nm" maxlength="12" value="${esc(t.name)}" placeholder="예: 방콕"></label>
@@ -1052,7 +1059,7 @@
         <div class="chips">${[0, 1, 2, 3].map((l) => `<button class="chip ${t.line === l ? 'on' : ''}" data-l="${l}">${l + 1}번째 줄</button>`).join('')}</div>
         <div class="sub">금액 (만 마블)</div>
         <table class="ptable form"><tr><th></th><th>건설비</th><th>통행료</th></tr>
-          ${items().map((k) => `<tr><td>${t.kind === 'tour' ? '관광지' : ICON[k] + ' ' + G.ITEM_NAMES[k]}</td><td>${field(k, 'cost')}</td><td>${field(k, 'toll')}</td></tr>`).join('')}
+          ${items().map((k) => `<tr><td>${ICON[k]} ${G.ITEM_NAMES[k]}</td><td>${field(k, 'cost')}</td><td>${field(k, 'toll')}</td></tr>`).join('')}
         </table>
         <div class="err" id="err"></div>
         <div class="row mt">
