@@ -660,7 +660,7 @@
     const list = (pr ? G.BUILDINGS : ['villa', 'building', 'hotel']).filter((k) => !built[k]);
     if (!list.length) return '';
     return `<div class="checks">${list.map((k) => {
-      const why = !G.canBuild(m, k) ? `${m.laps + 1}번째 턴은 ${G.ITEM_NAMES[G.maxBuilding(m)]}까지` : k === 'landmark' && !ready ? '빌라·빌딩·호텔 필요' : '';
+      const why = !G.canBuild(m, k) ? `${G.BUILDINGS.indexOf(k) + 1}번째 턴부터` : k === 'landmark' && !ready ? '빌라·빌딩·호텔 필요' : '';
       return `<label class="check ${why ? 'off' : ''}"><input type="checkbox" data-item="${k}" ${why ? 'disabled' : ''}>
         ${ICON[k]} ${G.ITEM_NAMES[k]} <span class="muted">${fmt(t.cost[k])}</span>${why ? `<small>${why}</small>` : ''}</label>`;
     }).join('')}</div>`;
