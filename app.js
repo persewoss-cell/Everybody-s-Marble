@@ -45,6 +45,7 @@
   const others = () => state.players.filter((p) => p.id !== session.playerId && !p.bankrupt);
   const prop = (id) => state.props[id];
   const myTiles = (pid) => G.BOARD.filter((t) => prop(t.id) && prop(t.id).owner === (pid || session.playerId));
+  const pc = (p) => (p && p.color) || '#a9b0c0';
   const tileColor = (t) => (t.kind === 'tour' ? (t.tour === 'island' ? '#2bb3a3' : '#e98aa5') : G.GROUPS[t.group].color);
   const ICON = { land: '🚩', villa: '🏠', building: '🏢', hotel: '🏨', landmark: '🗼' };
   const TOUR_ICON = ['🚩', '⛱️', '🛖'];
@@ -383,13 +384,14 @@
       <div class="card">
         <h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li>
-          <span class="dot" style="background:${p.color}"></span>
+          <span class="dot" style="background:${pc(p)}"></span>
           <span class="name">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${p.id === session.playerId ? '<span class="tag">나</span>' : ''}</span>
           ${host && p.id !== state.hostId ? `<button class="link" data-kick="${p.id}">내보내기</button>` : ''}
         </li>`).join('')}</ul>
       </div>
+      ${colorPicker()}
       ${host
-        ? `<button class="btn accent" id="start" ${state.players.length < 2 ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
+        ? `<button class="btn accent" id="start" ${state.players.length < 2 || state.players.some((p) => !p.color) ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
            <div class="sub mt">📱 방장 기기가 은행 역할을 해요. 게임하는 동안 방장 기기는 이 화면을 켜 두세요.</div>`
         : '<div class="card center muted">방장이 게임을 시작하기를 기다리는 중...</div>'}
       <div class="row mt"><button class="btn secondary" id="rules">규칙 요약</button><button class="btn secondary" id="leave">나가기</button></div>
@@ -400,11 +402,25 @@
     $app.querySelectorAll('[data-kick]').forEach((b) => {
       b.onclick = () => confirmBox(`${player(b.dataset.kick).name}님을 내보낼까요?`, { type: 'kick', playerId: b.dataset.kick });
     });
+    $app.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => run({ type: 'pickColor', color: b.dataset.color })));
     if (host) $app.querySelector('#start').onclick = () => run({ type: 'start' });
     $app.querySelector('#leave').onclick = () => confirmBox(host ? '방을 닫을까요? 다른 사람도 나가게 돼요.' : '방에서 나갈까요?', async () => {
       if (conn) await conn.leave();
       goHome();
     });
+  }
+
+  function colorPicker() {
+    const hostColor = player(state.hostId).color;
+    const waitHost = !isHost() && !hostColor;
+    return `<div class="card"><h2>말 색 고르기 <small class="muted">${waitHost ? '방장이 먼저 골라요' : '실제로 쓸 말과 같은 색을 고르세요'}</small></h2>
+      <div class="pieces">${G.PIECES.map((c) => {
+        const owner = state.players.find((p) => p.color === c.color);
+        const mine = owner && owner.id === session.playerId;
+        const off = waitHost || (owner && !mine);
+        return `<button class="piece ${mine ? 'on' : ''}" data-color="${c.color}" ${off ? 'disabled' : ''} style="--pc:${c.color}">
+          <i></i><b>${c.name}</b><small>${owner ? esc(owner.name) : '비어 있음'}</small></button>`;
+      }).join('')}</div></div>`;
   }
 
   // ---------- 게임 화면 ----------
@@ -428,16 +444,49 @@
   function tileButton(t, attr) {
     const pr = prop(t.id);
     const owner = pr && player(pr.owner);
-    return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${owner.color}` : ''}">
+    return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <b>${esc(t.name)}</b>
       <span class="tp">${owner ? builtIcons(t) : fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>
-      <span class="tb">${tileBadges(t)}</span>
+      <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}
     </button>`;
   }
+  // 그 칸에 있는 말 (오른쪽 위 동그라미)
+  function piecesAt(pos) {
+    const here = state.players.filter((p) => !p.bankrupt && (p.pos || 0) === pos);
+    return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
+  }
+  function spaceButton(sp, attr) {
+    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span>${piecesAt(sp.pos)}</button>`;
+  }
+
+  let view = (() => { try { return localStorage.getItem('marble-view') || 'real'; } catch { return 'real'; } })();
   function boardHtml(filter) {
-    return [0, 1, 2, 3].map((l) => `<div class="line"><span class="ln">${G.LINE_NAMES[l]}</span><div class="tiles">
-      ${G.BOARD.filter((t) => t.line === l).map((t) => (filter ? tileButton(t, filter(t) ? `data-pick="${t.id}"` : 'disabled') : tileButton(t))).join('')}
-    </div></div>`).join('');
+    const cell = (sp) => {
+      if (sp.kind === 'special') return spaceButton(sp, filter ? 'disabled' : '');
+      return filter ? tileButton(sp, filter(sp) ? `data-pick="${sp.id}"` : 'disabled') : tileButton(sp);
+    };
+    if (view === 'real') {
+      // 실제 게임판처럼: 아래 오른쪽이 출발, 시계방향
+      const at = (pos) => {
+        if (pos <= 8) return [9, 9 - pos, 'b'];
+        if (pos <= 16) return [9 - (pos - 8), 1, 'l'];
+        if (pos <= 24) return [1, 1 + (pos - 16), 't'];
+        return [1 + (pos - 24), 9, 'r'];
+      };
+      return `<div class="rboard">${G.SPACES.map((sp) => {
+        const [r, c, side] = at(sp.pos);
+        const corner = sp.pos % 8 === 0;
+        return `<div class="cell ${corner ? 'corner' : side}" style="grid-row:${r};grid-column:${c}">${cell(sp)}</div>`;
+      }).join('')}<div class="center"><div class="logo">모두의 마블</div>
+        <div class="legend">🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전</div></div></div>`;
+    }
+    const lines = [0, 1, 2, 3].map((l) => `<div class="line"><span class="ln">${G.LINE_NAMES[l]}</span><div class="tiles">
+      ${G.BOARD.filter((t) => t.line === l).map(cell).join('')}</div></div>`).join('');
+    return `${lines}<div class="line"><span class="ln">★</span><div class="tiles">${G.SPACES.filter((sp) => sp.kind === 'special').map(cell).join('')}</div></div>`;
+  }
+  function bindBoard(root) {
+    root.querySelectorAll('[data-tile]').forEach((b) => (b.onclick = () => tileSheet(b.dataset.tile)));
+    root.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = () => specialSheet(Number(b.dataset.sp))));
   }
 
   function renderGame() {
@@ -447,7 +496,7 @@
     const canUndo = undoTx && (undoTx.actorId === m.id || host);
     $app.innerHTML = `${topbar()}<div class="game">
       <section>
-        <div class="me ${m.bankrupt ? 'bankrupt' : ''}" style="--pc:${m.color}">
+        <div class="me ${m.bankrupt ? 'bankrupt' : ''}" style="--pc:${pc(m)}">
           <div class="who">${esc(m.name)}${host ? ' · 방장' : ''} · ${m.bankrupt ? '파산' : `${m.laps + 1}번째 턴 (${G.ITEM_NAMES[G.maxBuilding(m)]}까지 건설)`}</div>
           <div class="bal">${fmt(m.money)} <small>마블</small></div>
         </div>
@@ -461,12 +510,13 @@
           <button class="act" data-a="fortune">🃏<span>포춘카드</span></button>
           <button class="act" data-a="transfer">💸<span>송금</span></button>
         </div>`}
-        <div class="card board"><div class="sub">도착한 칸을 누르세요 · 🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전</div>${boardHtml()}</div>
+        <div class="card board"><div class="loghead"><span class="sub">도착한 칸을 누르세요${view === 'real' ? '' : ' · 🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전'}</span>
+          <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>${boardHtml()}</div>
       </section>
       <section>
         <div class="card">
           <ul class="plist">${state.players.map((p) => `<li>
-            <span class="dot" style="background:${p.color}"></span>
+            <span class="dot" style="background:${pc(p)}"></span>
             <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}</span>
             <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
             <span class="money">${fmt(p.money)}</span>
@@ -485,8 +535,13 @@
     </div>`;
     bindTop();
     $app.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => ACTIONS[b.dataset.a]()));
-    $app.querySelectorAll('[data-tile]').forEach((b) => (b.onclick = () => tileSheet(b.dataset.tile)));
+    bindBoard($app);
     const q = (s) => $app.querySelector(s);
+    q('#view').onclick = () => {
+      view = view === 'real' ? 'card' : 'real';
+      try { localStorage.setItem('marble-view', view); } catch {}
+      render();
+    };
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -548,7 +603,8 @@
     const owner = pr && player(pr.owner);
     const head = `<h3><span class="dot" style="background:${tileColor(t)}"></span> ${esc(t.name)}
       <small>${t.kind === 'tour' ? (t.tour === 'island' ? '섬 관광지' : '해변 관광지') : G.GROUPS[t.group].name + ' 도시'} ${tileBadges(t)}</small></h3>
-      <div class="sub">${owner ? `주인 <b>${esc(owner.name)}</b> ${builtIcons(t)}` : '주인 없음'}</div>`;
+      <div class="sub sheethead">${owner ? `주인 <b>${esc(owner.name)}</b> ${builtIcons(t)}` : '주인 없음'}
+        <button class="btn small secondary" data-move="${t.pos}">📍 내 말 여기로</button></div>`;
 
     // 빈 땅 → 구매
     if (!pr) {
@@ -622,15 +678,39 @@
     openModal(`<h3>🤝 ${esc(t.name)} 인수할까요?</h3>
       <div class="preview"><span>인수비용 (${esc(player(pr.owner).name)}에게)</span><b>${fmt(price)}</b></div>
       <div class="sub">인수하면 이어서 건물을 지을 수 있어요.</div>
+      <label class="check confirm"><input type="checkbox" id="sure"> 네, ${esc(t.name)}을(를) ${fmt(price)}에 인수할게요</label>
       <div class="err" id="err"></div>
       <div class="row"><button class="btn secondary" data-close>인수 안 함</button><button class="btn accent" id="ok">인수하기</button></div>`, (root) => {
       root.querySelector('#ok').onclick = () => {
+        if (!root.querySelector('#sure').checked) {
+          root.querySelector('#err').textContent = '인수하려면 체크 버튼을 눌러주세요.';
+          return toast('인수하려면 체크 버튼을 눌러주세요.', 'err');
+        }
         if (run({ type: 'takeover', tileId: t.id }) && state.status === 'playing') tileSheet(t.id);
       };
     });
   }
 
   // ---------- 특수 칸 / 포춘카드 ----------
+  function specialSheet(pos) {
+    const sp = G.SPACES[pos];
+    if (me().bankrupt) return;
+    const BTN = {
+      start: ['🏁 월급 받기', () => ACTIONS.salary(pos), '출발지에 도착하면 내 도시 한 곳에 건물을 세울 수 있어요. 그 도시 칸을 눌러 건설하세요.'],
+      bonus: ['🪙 보너스 게임', () => ACTIONS.bonus(), '코인 앞뒤 맞히기 — 연속 1·2·3회 성공 시 40·80·160만'],
+      island: [`🏝️ 보석금 ${fmt(G.BAIL)} 내고 탈출`, () => ACTIONS.bail(), '3차례 동안 이동할 수 없어요. 더블, 보석금, 무인도 탈출 카드로 나올 수 있어요.'],
+      card: ['🃏 포춘카드', () => { run({ type: 'move', to: pos }, { keepOpen: true }); fortuneDialog(); }, '포춘카드를 뒤집고 미션을 수행하세요.'],
+      olympic: [`🏅 올림픽 개최 (${fmt(G.OLYMPIC_COST)})`, () => ACTIONS.olympic(pos), '내 도시 한 곳에 올림픽을 열 수 있어요.'],
+      travel: [`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}`, () => ACTIONS.travel(), '다음 차례에 비용을 내고 원하는 곳으로 가요. 출발지를 지나면 월급도 받아요.'],
+      tax: [`🧾 세금 ${fmt(G.TAX)} 내기`, () => ACTIONS.tax(), '세금이 부족하면 도시를 매각해서 내요.'],
+    }[sp.key];
+    openModal(`<h3>${sp.icon} ${sp.name}</h3>
+      <div class="sub sheethead">${BTN[2]}<button class="btn small secondary" data-move="${pos}">📍 내 말 여기로</button></div>
+      <button class="btn accent mt" id="go">${BTN[0]}</button>`, (root) => {
+      root.querySelector('#go').onclick = BTN[1];
+    });
+  }
+
   // 칸 고르기: filter에 맞는 칸만 누를 수 있음
   function pickTile(title, note, filter, onPick) {
     const any = G.BOARD.some(filter);
@@ -647,19 +727,19 @@
   const SHIELD = '상대가 방패나 천사 카드로 막으면 쓰지 마세요.';
 
   const ACTIONS = {
-    salary() {
+    salary(at) {
       openModal(`<h3>🏁 출발지를 지나 월급 받기</h3>
         <label class="check"><input type="checkbox" id="boost"> 💰 월급 부스터 카드 사용 (2배)</label>
         <div class="sub">월급을 받으면 다음 턴이 돼요 (턴 제한: 첫 턴 빌라 → 빌딩 → 호텔 → 자유).</div>
         <div class="row"><button class="btn secondary" data-close>취소</button><button class="btn accent" id="ok">받기</button></div>`, (root) => {
-        root.querySelector('#ok').onclick = () => run({ type: 'salary', booster: root.querySelector('#boost').checked });
+        root.querySelector('#ok').onclick = () => run({ type: 'salary', booster: root.querySelector('#boost').checked, ...(Number.isInteger(at) ? { at } : {}) });
       });
     },
     bail: () => confirmBox(`🏝️ 무인도 보석금 ${fmt(G.BAIL)}을 내고 탈출할까요?`, { type: 'pay', what: 'bail' }, '내기'),
     tax: () => confirmBox(`🧾 국세청 세금 ${fmt(G.TAX)}을 낼까요?`, { type: 'pay', what: 'tax' }, '내기'),
     travel: () => confirmBox(`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}을 낼까요?\n출발지를 지나가면 월급도 받으세요.`, { type: 'pay', what: 'travel' }, '내기'),
-    olympic() {
-      pickTile('🏅 올림픽을 개최할 내 도시', `개최비용 ${fmt(G.OLYMPIC_COST)}. 올림픽은 한 곳에만 — 같은 도시는 ×3·×4·×5로, 다른 도시는 마크를 옮겨 ×2`, (t) => t.kind === 'city' && mineF(t), (id) => run({ type: 'olympic', tileId: id }));
+    olympic(at) {
+      pickTile('🏅 올림픽을 개최할 내 도시', `개최비용 ${fmt(G.OLYMPIC_COST)}. 올림픽은 한 곳에만 — 같은 도시는 ×3·×4·×5로, 다른 도시는 마크를 옮겨 ×2`, (t) => t.kind === 'city' && mineF(t), (id) => run({ type: 'olympic', tileId: id, ...(Number.isInteger(at) ? { at } : {}) }));
     },
     bonus() {
       openModal(`<h3>🪙 보너스 게임</h3><div class="sub">코인 앞뒤를 연속 몇 번 맞혔나요? (도전하다 틀리면 0)</div>
@@ -685,14 +765,14 @@
     ['명령', [
       ['월급 부스터', 'gold', '출발지를 지날 때 월급 2배', () => ACTIONS.salary()],
       ['후원금', 'gold', '모두에게서 10만씩 받기', () => confirmBox('모두에게서 후원금 10만씩 받을까요?\n(10만이 없으면 가진 만큼)', { type: 'sponsor' }, '받기')],
-      ['세계여행 초대장', 'gold', '세계여행으로 이동, 다음 차례에 비용 10만', () => ACTIONS.travel()],
+      ['세계여행 초대장', 'gold', '세계여행으로 이동, 다음 차례에 비용 10만', () => moveTo(G.POS.travel, '세계여행 칸으로 옮겼어요. 다음 차례에 비용 10만을 내세요.')],
       ['올림픽 개최', 'silver', '10만 내고 원하는 도시에 개최', () => ACTIONS.olympic()],
-      ['출발지로 GO', 'silver', '출발지로 이동해 월급, 내 도시에 건설', () => ACTIONS.salary()],
+      ['출발지로 GO', 'silver', '출발지로 이동해 월급, 내 도시에 건설', () => ACTIONS.salary(G.POS.start)],
       ['보너스 게임', 'silver', '보너스 게임으로 이동', () => ACTIONS.bonus()],
       ['강제징수', 'bronze', '국세청으로 이동해 세금 20만', () => ACTIONS.tax()],
       ['도시기부', 'bronze', '내 도시 하나를 상대에게', () => donateDialog()],
       ['올림픽 관광', 'bronze', '올림픽 개최지로 이동해 통행료', () => (state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.'))],
-      ['무인도 탐험', 'bronze', '무인도로 즉시 이동 (월급 없음)', null],
+      ['무인도 탐험', 'bronze', '무인도로 즉시 이동 (월급 없음)', () => moveTo(G.POS.island, '무인도로 옮겼어요.')],
     ]],
     ['공격', [
       ['도시체인지', 'gold', '상대 도시와 내 도시 맞교환', () => swapDialog()],
@@ -710,6 +790,10 @@
       ['방패', 'silver', '상대 공격 방어', null],
     ]],
   ];
+
+  function moveTo(pos, msg) {
+    if (run({ type: 'move', to: pos })) toast(msg);
+  }
 
   function fortuneDialog() {
     openModal(`<h3>🃏 포춘카드</h3>
@@ -746,7 +830,7 @@
       <p>게임에서 빠지고 내 땅·건물은 모두 치워요. 남은 마블 ${fmt(me().money)}은(는) 빚진 사람에게 가요.</p>
       <div class="sub">누구에게 빚졌나요?</div>
       <div class="chips"><button class="chip ${to ? '' : 'on'}" data-p="">🏦 은행 (세금 등)</button>
-      ${others().map((p) => `<button class="chip ${p.id === to ? 'on' : ''}" data-p="${p.id}"><span class="dot" style="background:${p.color}"></span>${esc(p.name)}</button>`).join('')}</div>
+      ${others().map((p) => `<button class="chip ${p.id === to ? 'on' : ''}" data-p="${p.id}"><span class="dot" style="background:${pc(p)}"></span>${esc(p.name)}</button>`).join('')}</div>
       <div class="err" id="err"></div>
       <div class="row"><button class="btn secondary" data-close>취소</button><button class="btn danger" id="ok">파산</button></div>`, (root) => {
       bindChoice(root, 'p', (v) => (to = v));
@@ -794,7 +878,7 @@
     const canUndo = undoTx && (undoTx.actorId === session.playerId || isHost());
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="card winner"><div class="trophy">🏆</div><h2>${esc(player(r.winnerId).name)} 승리!</h2><div class="muted">${esc(r.reason || '')}</div></div>
-      <div class="card"><ul class="plist">${rank.map((p, i) => `<li><b>${i + 1}</b><span class="dot" style="background:${p.color}"></span>
+      <div class="card"><ul class="plist">${rank.map((p, i) => `<li><b>${i + 1}</b><span class="dot" style="background:${pc(p)}"></span>
         <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}</span><span class="money">${p.bankrupt ? '파산' : fmt(p.money)}</span></li>`).join('')}</ul></div>
       <div class="card"><div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${canUndo ? '' : 'disabled'}>↩ 되돌리기</button></div>${logHtml()}</div>
       ${isHost() ? '<button class="btn accent" id="again">같은 사람들과 다시 하기</button>' : ''}
@@ -810,12 +894,14 @@
   }
 
   // ---------- 모달 ----------
+  // 2. 팝업은 오른쪽 위 ✕(또는 닫기·취소 버튼)로만 닫힘. 바깥을 눌러도 안 닫힘
   function openModal(html, onMount) {
-    $modal.innerHTML = `<div class="modal-bg"><div class="modal">${html}</div></div>`;
-    const bg = $modal.firstElementChild;
-    bg.addEventListener('click', (e) => { if (e.target === bg) closeModal(); });
-    const root = bg.firstElementChild;
+    $modal.innerHTML = `<div class="modal-bg"><div class="modal"><button class="x" data-close aria-label="닫기">✕</button>${html}</div></div>`;
+    const root = $modal.firstElementChild.firstElementChild;
     root.querySelectorAll('[data-close]').forEach((b) => (b.onclick = closeModal));
+    root.querySelectorAll('[data-move]').forEach((b) => (b.onclick = () => {
+      if (run({ type: 'move', to: Number(b.dataset.move) }, { keepOpen: true })) toast('말을 옮겼어요.');
+    }));
     if (onMount) onMount(root);
     return root;
   }
@@ -834,7 +920,7 @@
 
   function playerChips(list, selected) {
     return `<div class="chips">${list.map((p) => `<button class="chip ${p.id === selected ? 'on' : ''}" data-p="${p.id}">
-      <span class="dot" style="background:${p.color}"></span>${esc(p.name)}</button>`).join('')}</div>`;
+      <span class="dot" style="background:${pc(p)}"></span>${esc(p.name)}</button>`).join('')}</div>`;
   }
   function bindChoice(root, name, onPick) {
     const btns = root.querySelectorAll(`[data-${name}]`);

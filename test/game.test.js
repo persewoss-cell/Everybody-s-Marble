@@ -10,6 +10,7 @@ function setup(n = 3) {
   const room = g.createRoom('1234', '엄마', 'a');
   g.addPlayer(room, '아빠', 'b');
   if (n > 2) g.addPlayer(room, '아들', 'c');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
   g.applyAction(room, 'a', { type: 'start' });
   room.festival = []; // 축제도시는 테스트마다 직접 정함
   return room;
@@ -227,4 +228,33 @@ test('송금: 은행에도 낼 수 있음', () => {
   assert.strictEqual(money(room, 'a'), 185 * M);
   act(room, 'a', 'undo');
   assert.strictEqual(money(room, 'a'), 200 * M);
+});
+
+test('말 색: 방장부터, 겹치지 않게, 다 골라야 시작', () => {
+  const room = g.createRoom('1', '엄마', 'a');
+  g.addPlayer(room, '아빠', 'b');
+  const red = g.PIECES[0].color;
+  assert.throws(() => act(room, 'b', 'pickColor', { color: red }), /방장이 먼저/);
+  act(room, 'a', 'pickColor', { color: red });
+  assert.throws(() => act(room, 'b', 'pickColor', { color: red }), /이미 고른/);
+  assert.throws(() => act(room, 'a', 'start'), /아빠님이 아직/);
+  act(room, 'b', 'pickColor', { color: g.PIECES[3].color });
+  act(room, 'a', 'start');
+});
+
+test('게임판 32칸과 말 위치', () => {
+  assert.strictEqual(g.SPACES.length, 32);
+  assert.deepStrictEqual(g.SPACES.filter((s) => s.kind === 'special').map((s) => s.key),
+    ['start', 'bonus', 'island', 'card', 'olympic', 'card', 'travel', 'card', 'tax']);
+  assert.deepStrictEqual(g.SPACES.slice(25, 28).map((s) => s.name), ['타히티', '런던', '파리']);
+  const room = setup();
+  act(room, 'b', 'buy', { tileId: id('서울') });
+  assert.strictEqual(room.players[1].pos, 31);
+  act(room, 'b', 'pay', { what: 'tax' });
+  assert.strictEqual(room.players[1].pos, 30);
+  act(room, 'b', 'move', { to: 8 });
+  act(room, 'b', 'undo'); // 되돌려도 말 위치는 그대로
+  assert.strictEqual(room.players[1].pos, 8);
+  act(room, 'b', 'salary', { at: 0 });
+  assert.strictEqual(room.players[1].pos, 0);
 });

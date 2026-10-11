@@ -87,7 +87,7 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .btn.secondary { background: var(--chip); color: var(--text); }
 .btn.accent { background: var(--accent); color: #1b2236; }
 .btn.danger { background: var(--minus); color: #fff; }
-.btn.small { width: auto; padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+.btn.small { white-space: nowrap; width: auto; padding: 6px 12px; font-size: 13px; border-radius: 8px; }
 .btn.wide { width: 100%; margin-top: 8px; }
 .btn:disabled { opacity: .4; }
 .row { display: flex; gap: 6px; align-items: center; }
@@ -220,3 +220,53 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .winner .trophy { font-size: 48px; }
 .winner h2 { font-size: 22px; margin: 4px 0; }
 .rules { font-size: 13px; line-height: 1.6; }
+
+/* 팝업 닫기 ✕ */
+.modal .x {
+  position: sticky; top: 0; float: right; z-index: 2; margin: -4px -4px 0 8px;
+  width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--chip); font-size: 17px; font-weight: 700;
+}
+.sheethead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.check.confirm { background: #fff4c2; color: #1b2236; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-weight: 700; }
+
+/* 말 색 고르기 */
+.pieces { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.piece { border: 2px solid var(--line); background: var(--card); border-radius: 12px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.piece i { width: 26px; height: 26px; border-radius: 50%; background: var(--pc); box-shadow: inset 0 -3px 0 rgba(0,0,0,.15); }
+.piece small { font-size: 11px; color: var(--muted); }
+.piece.on { border-color: var(--pc); background: color-mix(in srgb, var(--pc) 18%, var(--card)); }
+.piece:disabled { opacity: .45; }
+
+/* 말 위치: 칸 오른쪽 위 동그라미 */
+.tile { position: relative; }
+.pcs { position: absolute; top: 2px; right: 2px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 1px; max-width: 60%; }
+.pcs i { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.tile.sp { border-top: 1px solid var(--line); background: var(--chip); }
+.tile.sp b { font-size: 16px; }
+
+/* 실제버전 게임판 (9 × 9, 아래 오른쪽 출발) */
+.rboard {
+  display: grid; gap: 2px; aspect-ratio: 1; width: 100%; max-width: 820px; margin: 4px auto 0;
+  max-width: min(820px, calc(100vh - 300px), 100%); min-width: min(100%, 300px);
+  grid-template-columns: 1.35fr repeat(7, 1fr) 1.35fr; grid-template-rows: 1.35fr repeat(7, 1fr) 1.35fr;
+  background: #6b4a2b; padding: 4px; border-radius: 10px;
+}
+.rboard .cell { display: flex; min-width: 0; min-height: 0; }
+.rboard .tile { flex: 1; min-height: 0; border-radius: 4px; padding: 1px; justify-content: center; border-width: 1px; gap: 0; overflow: hidden; }
+.rboard .cell.b .tile { border-top: 5px solid var(--c); }
+.rboard .cell.t .tile { border-top-width: 1px; border-bottom: 5px solid var(--c); }
+.rboard .cell.l .tile { border-top-width: 1px; border-right: 5px solid var(--c); }
+.rboard .cell.r .tile { border-top-width: 1px; border-left: 5px solid var(--c); }
+.rboard .tile b { font-size: clamp(8px, 1.7vw, 13px); letter-spacing: -0.6px; }
+.rboard .tile .tp { font-size: clamp(7px, 1.4vw, 11px); white-space: nowrap; }
+.rboard .tile .tb { font-size: clamp(7px, 1.3vw, 11px); min-height: 0; }
+.rboard .tile.sp b { font-size: clamp(13px, 3.2vw, 26px); }
+.rboard .cell.corner .tile.sp { background: #e9f1fb; }
+.rboard .pcs i { width: clamp(8px, 1.8vw, 13px); height: clamp(8px, 1.8vw, 13px); }
+.rboard .center {
+  grid-row: 2 / 9; grid-column: 2 / 9; background: #4a3220; border-radius: 6px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; gap: 6px;
+}
+.rboard .center .logo { font-size: clamp(18px, 5vw, 40px); font-weight: 900; color: #ffd84d; text-shadow: 0 2px 0 #1d2b53, 0 0 12px rgba(0,0,0,.4); transform: rotate(-8deg); }
+.rboard .center .legend { font-size: clamp(9px, 1.6vw, 12px); opacity: .85; }
+.modal .rboard { max-width: 560px; }

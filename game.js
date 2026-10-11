@@ -18,7 +18,13 @@ const TOUR_TOLL = [8 * MAN, 16 * MAN, 32 * MAN]; // 깃발 · 파라솔 · 방�
 const TOUR_SELL = 5 * MAN;
 const MAX_OLYMPIC = 4; // 최대 4번 중복 개최 → ×5
 const MAX_PLAYERS = 4;
-const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f'];
+// 입체 캐릭터 말 4색. 방에 들어오면 각자 고름 (방장부터)
+const PIECES = [
+  { name: '빨강', color: '#e74c3c' },
+  { name: '노랑', color: '#f1c40f' },
+  { name: '초록', color: '#2ecc71' },
+  { name: '파랑', color: '#3498db' },
+];
 
 const BUILDINGS = ['villa', 'building', 'hotel', 'landmark'];
 const ITEM_NAMES = { land: '땅', villa: '빌라', building: '빌딩', hotel: '호텔', landmark: '랜드마크' };
@@ -78,6 +84,32 @@ const BOARD = CARDS.map(([name, kind, line, cost, toll], i) => {
   return t;
 });
 const TILE = Object.fromEntries(BOARD.map((t) => [t.id, t]));
+
+// 게임판 32칸 (룰북 2쪽 그림). 0 = 출발지에서 시계방향.
+// 아래(A): 출발 → 방콕 … 카이로 → 무인도 / 왼쪽(D) → 올림픽 / 위(C) → 세계여행 / 오른쪽(B) → 서울 → 출발
+const SPECIALS = {
+  start: { name: '출발', icon: '🏁' },
+  bonus: { name: '보너스 게임', short: '보너스', icon: '🪙' },
+  island: { name: '무인도', icon: '🏝️' },
+  card: { name: '포춘카드', icon: '🃏' },
+  olympic: { name: '올림픽', icon: '🏅' },
+  travel: { name: '세계여행', icon: '✈️' },
+  tax: { name: '국세청', icon: '🧾' },
+};
+const LAYOUT = [
+  'start', '방콕', 'bonus', '베이징', '독도', '타이페이', '두바이', '카이로',
+  'island', '발리', '도쿄', '시드니', 'card', '퀘벡', '하와이', '상파울로',
+  'olympic', '프라하', '푸켓', '베를린', 'card', '모스크바', '제네바', '로마',
+  'travel', '타히티', '런던', '파리', 'card', '뉴욕', 'tax', '서울',
+];
+const SPACES = LAYOUT.map((key, pos) => {
+  if (SPECIALS[key]) return { pos, kind: 'special', key, ...SPECIALS[key] };
+  const t = BOARD.find((x) => x.name === key);
+  t.pos = pos;
+  return t;
+});
+BOARD.sort((a, b) => a.pos - b.pos);
+const POS = { start: 0, bonus: 2, island: 8, olympic: 16, travel: 24, tax: 30 };
 
 class GameError extends Error {
   constructor(message, extra) {
@@ -142,9 +174,7 @@ function addPlayer(room, name, id) {
   if (room.players.length >= MAX_PLAYERS) throw new GameError(`최대 ${MAX_PLAYERS}명까지 참가할 수 있습니다.`);
   const n = cleanName(name);
   if (room.players.some((p) => p.name === n)) throw new GameError('같은 이름이 이미 있습니다.');
-  const used = new Set(room.players.map((p) => p.color));
-  const color = COLORS.find((c) => !used.has(c)) || COLORS[0];
-  const player = { id, name: n, color, money: 0, laps: 0, bankrupt: false };
+  const player = { id, name: n, color: null, money: 0, laps: 0, pos: 0, bankrupt: false };
   room.players.push(player);
   return player;
 }
@@ -400,6 +430,26 @@ const PAY = {
 
 // ---- 동작 ----
 const actions = {
+  // 말 색 고르기: 방장이 먼저, 이미 고른 색은 안 됨
+  pickColor(room, actorId, a) {
+    if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 색을 고를 수 있습니다.');
+    if (!PIECES.some((c) => c.color === a.color)) throw new GameError('알 수 없는 색입니다.');
+    const host = getPlayer(room, room.hostId);
+    if (actorId !== room.hostId && !host.color) throw new GameError('방장이 먼저 색을 골라요.');
+    const other = room.players.find((p) => p.color === a.color && p.id !== actorId);
+    if (other) throw new GameError(`${other.name}님이 이미 고른 색이에요.`);
+    getPlayer(room, actorId).color = a.color;
+  },
+
+  // 내 말 옮기기 (돈 거래 없음, 기록 안 남김)
+  move(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const to = toInt(a.to, '칸');
+    if (to < 0 || to >= SPACES.length) throw new GameError('알 수 없는 칸입니다.');
+    p.pos = to;
+  },
+
   kick(room, actorId, a) {
     requireHost(room, actorId);
     if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 내보낼 수 있습니다.');
@@ -412,6 +462,8 @@ const actions = {
     requireHost(room, actorId);
     if (room.status !== 'lobby') throw new GameError('이미 시작했습니다.');
     if (room.players.length < 2) throw new GameError('2명 이상이어야 시작할 수 있습니다.');
+    const noColor = room.players.filter((p) => !p.color).map((p) => p.name);
+    if (noColor.length) throw new GameError(`${noColor.join(', ')}님이 아직 말 색을 고르지 않았어요.`);
     room.status = 'playing';
     room.props = {};
     room.effects = {};
@@ -423,6 +475,7 @@ const actions = {
     for (const p of room.players) {
       p.money = 0;
       p.laps = 0;
+      p.pos = 0;
       p.bankrupt = false;
       deltas[p.id] = START_MONEY;
     }
@@ -725,7 +778,9 @@ const actions = {
     const tx = lastUndoable(room);
     if (!tx) throw new GameError('되돌릴 거래가 없습니다.');
     if (tx.actorId !== actorId && room.hostId !== actorId) throw new GameError(`가장 최근 거래는 ${pname(room, tx.actorId)}님 것이에요. 본인이나 방장만 되돌릴 수 있어요.`);
+    const pos = Object.fromEntries(room.players.map((p) => [p.id, p.pos])); // 말 위치는 그대로 둠
     Object.assign(room, JSON.parse(JSON.stringify(tx.before)));
+    for (const p of room.players) if (pos[p.id] !== undefined) p.pos = pos[p.id];
     tx.undone = true;
     delete tx.before;
     record(room, actorId, 'undo', `${pname(room, actorId)} 되돌리기: ${tx.text}`, {});
@@ -777,12 +832,24 @@ function attackTarget(room, actorId, tileId, opt) {
   return { p, tile, prop, owner: getPlayer(room, prop.owner) };
 }
 
+const TILE_ACTIONS = ['buy', 'build', 'arrive', 'toll', 'takeover'];
+function whereAt(a) {
+  if (TILE_ACTIONS.includes(a.type) && TILE[a.tileId]) return TILE[a.tileId].pos;
+  if (a.type === 'pay') return POS[{ bail: 'island', tax: 'tax', travel: 'travel' }[a.what]];
+  if (a.type === 'bonus') return POS.bonus;
+  if (Number.isInteger(a.at) && a.at >= 0 && a.at < SPACES.length) return a.at;
+  return null;
+}
+
 function applyAction(room, actorId, action) {
   if (!action || typeof action.type !== 'string' || !Object.prototype.hasOwnProperty.call(actions, action.type)) {
     throw new GameError('알 수 없는 동작입니다.');
   }
-  getPlayer(room, actorId);
+  const me = getPlayer(room, actorId);
   actions[action.type](room, actorId, action);
+  // 칸에서 한 거래면 내 말을 그 칸으로 옮김
+  const at = whereAt(action);
+  if (at !== null && room.status !== 'lobby') me.pos = at;
   room.updatedAt = Date.now();
 }
 
@@ -792,7 +859,7 @@ function publicState(room) {
     code: room.code,
     status: room.status,
     hostId: room.hostId,
-    players: room.players.map(({ id, name, color, money, laps, bankrupt }) => ({ id, name, color, money, laps, bankrupt })),
+    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt }) => ({ id, name, color, money, laps, pos: pos || 0, bankrupt })),
     props: room.props,
     olympic: room.olympic,
     festival: room.festival,
@@ -810,7 +877,7 @@ function roomFromPublic(state) {
 
 const api = {
   MAN, START_MONEY, SALARY, BAIL, TAX, TRAVEL, OLYMPIC_COST, SPONSOR, BONUS, TOUR_PRICE, TOUR_TOLL, TOUR_SELL,
-  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
+  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
   GameError, createRoom, addPlayer, findByName, applyAction, publicState, roomFromPublic,
   fmt, tollInfo, takeoverPrice, sellPrice, tourLevel, hasMonopoly, canBuild, maxBuilding, builtItems, lastUndoable,
 };
