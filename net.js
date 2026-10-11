@@ -287,6 +287,7 @@
         host: host ? host.name : '',
         players: room.players.map((p) => p.name),
         status: room.status,
+        mode: room.mode,
         at: Date.now(),
       };
       this.client.publish(listingTopic(room.code), JSON.stringify(info), { qos: 1, retain: true });
@@ -351,7 +352,7 @@
   }
 
   // ---- 방 만들기 / 참가 ----
-  async function createRoom(name) {
+  async function createRoom(name, mode) {
     let lastErr;
     for (const url of brokerList()) {
       let client;
@@ -367,7 +368,7 @@
         if (existing && existing.state) continue; // 이미 쓰는 번호
         const playerId = rand(6);
         const token = rand(16);
-        const room = G.createRoom(code, name, playerId);
+        const room = G.createRoom(code, name, playerId, mode);
         saveHost(code, { room, tokens: { [playerId]: token }, seen: {}, rev: 0, epoch: rand(4) });
         const session = { code, broker: url, playerId, token, cid: rand(6), host: true, name };
         return { session, client };

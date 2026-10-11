@@ -258,3 +258,100 @@ test('게임판 32칸과 말 위치', () => {
   act(room, 'b', 'salary', { at: 0 });
   assert.strictEqual(room.players[1].pos, 0);
 });
+
+// ---- 앱으로만 하는 방 ----
+function appRoom() {
+  const room = g.createRoom('1', '엄마', 'a', 'app');
+  g.addPlayer(room, '아빠', 'b');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
+  g.applyAction(room, 'a', { type: 'start' });
+  room.festival = [];
+  act(room, 'a', 'orderRoll', { dice: [2, 3] });
+  act(room, 'b', 'orderRoll', { dice: [6, 6] });
+  return room;
+}
+
+test('앱 모드: 순서 정하기는 높은 사람부터, 동점이면 다시', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'app');
+  g.addPlayer(room, '아빠', 'b');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
+  act(room, 'a', 'start');
+  act(room, 'a', 'orderRoll', { dice: [3, 4] });
+  act(room, 'b', 'orderRoll', { dice: [5, 2] });
+  assert.strictEqual(room.phase, 'order'); // 7:7 동점
+  act(room, 'b', 'orderRoll', { dice: [1, 1] });
+  act(room, 'a', 'orderRoll', { dice: [6, 1] });
+  assert.deepStrictEqual(room.order, ['a', 'b']);
+  assert.strictEqual(room.turn.pid, 'a');
+});
+
+test('앱 모드: 내 차례만, 출발지 지나면 월급, 더블이면 한 번 더', () => {
+  const room = appRoom();
+  assert.strictEqual(room.turn.pid, 'b');
+  assert.throws(() => act(room, 'a', 'roll', { dice: [1, 2] }), /아빠님 차례/);
+  act(room, 'b', 'roll', { dice: [2, 2] });
+  assert.strictEqual(room.players[1].pos, 4);
+  act(room, 'b', 'roll', { dice: [6, 5] }); // 더블이라 한 번 더 → 15
+  assert.strictEqual(room.players[1].pos, 15);
+  assert.throws(() => act(room, 'b', 'roll', { dice: [1, 2] }), /이미 굴렸어요/);
+  act(room, 'b', 'endTurn');
+  assert.strictEqual(room.turn.pid, 'a');
+  room.players[0].pos = 30;
+  act(room, 'a', 'roll', { dice: [1, 2] }); // 30 → 1, 출발지 통과
+  assert.strictEqual(room.players[0].pos, 1);
+  assert.strictEqual(money(room, 'a'), 230 * M);
+});
+
+test('앱 모드: 더블 3번이면 무인도, 무인도는 더블이나 보석금으로 탈출', () => {
+  const room = appRoom();
+  act(room, 'b', 'roll', { dice: [1, 1] });
+  act(room, 'b', 'roll', { dice: [1, 1] });
+  act(room, 'b', 'roll', { dice: [1, 1] });
+  assert.strictEqual(room.players[1].pos, 8);
+  assert.strictEqual(room.players[1].jail, 3);
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  act(room, 'b', 'roll', { dice: [1, 2] }); // 실패
+  assert.strictEqual(room.players[1].pos, 8);
+  assert.strictEqual(room.players[1].jail, 2);
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'endTurn');
+  act(room, 'b', 'pay', { what: 'bail' });
+  act(room, 'b', 'roll', { dice: [1, 2] });
+  assert.strictEqual(room.players[1].pos, 11);
+});
+
+test('앱 모드: 세계여행은 다음 차례에 원하는 곳으로', () => {
+  const room = appRoom();
+  room.players[1].pos = 20;
+  act(room, 'b', 'roll', { dice: [1, 3] });
+  assert.strictEqual(room.players[1].travel, true);
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  assert.throws(() => act(room, 'b', 'roll', { dice: [1, 2] }), /세계여행/);
+  act(room, 'b', 'travelTo', { to: 5 }); // 출발지 지나서 월급
+  assert.strictEqual(room.players[1].pos, 5);
+  assert.strictEqual(money(room, 'b'), 220 * M);
+});
+
+test('앱 모드: 포춘카드 뽑기, 보관 카드는 1장, 방패로 공격 방어', () => {
+  const room = appRoom();
+  const pick = (key) => { const d = g.deck(room); return (d.indexOf(key) + 0.5) / d.length; };
+  assert.strictEqual(g.deck(room).length, 27);
+  act(room, 'b', 'draw', { pick: pick('shield') });
+  assert.strictEqual(room.players[1].card, 'shield');
+  assert.strictEqual(g.deck(room).length, 26);
+  act(room, 'b', 'draw', { pick: pick('coupon') });
+  assert.strictEqual(room.players[1].pendingCard, 'coupon');
+  act(room, 'b', 'keepCard', { keep: 'old' });
+  assert.strictEqual(room.players[1].card, 'shield');
+  act(room, 'b', 'buy', { tileId: id('서울') });
+  act(room, 'b', 'roll', { dice: [1, 2] });
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'quake', { tileId: id('서울') }); // 건물이 없어도 방패가 먼저 막음
+  assert.strictEqual(room.players[1].card, null);
+  act(room, 'a', 'draw', { pick: pick('goStart') });
+  assert.strictEqual(room.players[0].pos, 0);
+});

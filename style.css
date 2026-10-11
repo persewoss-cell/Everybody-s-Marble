@@ -270,3 +270,44 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .rboard .center .logo { font-size: clamp(18px, 5vw, 40px); font-weight: 900; color: #ffd84d; text-shadow: 0 2px 0 #1d2b53, 0 0 12px rgba(0,0,0,.4); transform: rotate(-8deg); }
 .rboard .center .legend { font-size: clamp(9px, 1.6vw, 12px); opacity: .85; }
 .modal .rboard { max-width: 560px; }
+
+/* 팝업 제목 옆 버튼 (✕ 왼쪽) */
+.modal .hbtn {
+  position: sticky; top: 0; float: right; z-index: 2; margin: -2px 6px 0 0;
+  border: 0; border-radius: 999px; padding: 7px 12px; font-weight: 700; font-size: 13px; background: var(--accent); color: #1b2236;
+}
+.row.tight { flex: none; gap: 4px; }
+.row.tight > * { flex: none; }
+
+/* 차례 표시 */
+.turnbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 7px 10px; }
+.turnbar.mine { outline: 2px solid var(--accent); }
+.turnbar .grow { flex: 1; }
+.turnbar .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; }
+
+/* 주사위 · 카드 장면 (모든 기기) */
+#fx { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; pointer-events: none; }
+#fx.show { display: flex; }
+.fxcard { background: rgba(20, 26, 45, .92); color: #fff; border-radius: 18px; padding: 16px 22px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.4); animation: up .15s ease-out; }
+.fxname { font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.dice { display: flex; gap: 16px; justify-content: center; }
+.die { width: 74px; height: 74px; background: #fffdf3; border-radius: 14px; display: grid; grid-template-columns: repeat(3, 1fr); padding: 9px; gap: 3px; box-shadow: inset 0 -4px 0 #ddd3b2; }
+.die i { border-radius: 50%; }
+.die i.on { background: #1b2236; }
+.fxsum { margin-top: 10px; font-size: 20px; font-weight: 800; min-height: 26px; }
+.bigcard { width: 150px; height: 200px; margin: 0 auto; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; color: #1b2236; }
+.bigcard.back { background: repeating-linear-gradient(45deg, #c9ccd6, #c9ccd6 8px, #e4e6ec 8px, #e4e6ec 16px); font-weight: 900; letter-spacing: 2px; }
+.bigcard.gold { background: #fbe9a0; }
+.bigcard.silver { background: #e3e6ec; }
+.bigcard.bronze { background: #e3d3a5; }
+.bigcard b { font-size: 20px; }
+.bigcard small { font-size: 13px; }
+.bigcard.flip { animation: flip .5s ease-out; }
+@keyframes flip { from { transform: rotateY(90deg); } to { transform: none; } }
+
+/* 보너스 게임 동전 */
+.coin { width: 110px; height: 110px; margin: 10px auto; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff3b0, #e0b33a 60%, #a8801c); display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 900; color: #5a4300; box-shadow: 0 4px 0 #8a6a12; }
+.coin.spin { animation: spin .25s linear infinite; }
+@keyframes spin { from { transform: rotateY(0); } to { transform: rotateY(360deg); } }
+.actions.app { grid-template-columns: repeat(2, 1fr); }
+@media (min-width: 600px) { .actions.app { grid-template-columns: repeat(2, minmax(0, 200px)); } }

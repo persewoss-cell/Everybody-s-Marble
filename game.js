@@ -149,9 +149,16 @@ function cleanName(name) {
 }
 
 // ---- 방 ----
-function createRoom(code, hostName, hostId) {
+// mode: 'app' = 앱으로만 (주사위·차례·포춘카드를 앱이 관리), 'mixed' = 앱 + 실물 (돈 계산 위주, 자유롭게)
+function createRoom(code, hostName, hostId, mode) {
   const room = {
     code,
+    mode: mode === 'app' ? 'app' : 'mixed',
+    phase: null,      // app: 'order'(순서 정하기) → 'turns'
+    orderRolls: {},   // 이번에 순서 정하기 주사위를 굴려야 하는 사람 → 합 (아직이면 null)
+    orderScore: {},   // 순서 정하기 점수 (동점이면 다시 굴린 값이 뒤에 붙음)
+    order: [],        // 차례 순서 (플레이어 id)
+    turn: null,       // { pid, rolled, again, doubles }
     createdAt: Date.now(),
     updatedAt: Date.now(),
     status: 'lobby', // lobby | playing | ended
@@ -345,6 +352,9 @@ function destroyTop(tile, prop) {
 const UNDO_DEPTH = 40;
 function snapshot(room) {
   return JSON.parse(JSON.stringify({
+    phase: room.phase,
+    order: room.order,
+    turn: room.turn,
     status: room.status,
     result: room.result,
     players: room.players,
@@ -422,6 +432,77 @@ function visit(room, tile, prop) {
   if (tile.tour === 'beach' && prop) prop.visits = Math.min(2, (prop.visits || 0) + 1);
 }
 
+// ---- 포춘카드 27장 (룰북 12쪽) ----
+// [key, 이름, 장수, 등급, 설명]
+const FORTUNE = [
+  ['booster', '월급 부스터', 1, 'gold', '출발지를 지날 때 월급 2배 (보관)'],
+  ['sponsor', '후원금', 1, 'gold', '모두에게서 10만씩 받기'],
+  ['travelInvite', '세계여행 초대장', 1, 'gold', '세계여행으로 이동. 다음 차례에 원하는 곳으로'],
+  ['angel', '천사', 2, 'gold', '통행료 면제 또는 공격 방어 (보관)'],
+  ['epidemic', '전염병', 1, 'gold', '같은 색 도시 모두 통행료 50%'],
+  ['alien', '외계인 침공', 1, 'gold', '같은 색 도시 건물 하나씩 파괴'],
+  ['forceSell', '강제매각', 1, 'gold', '상대 도시를 은행에 매각시킴'],
+  ['swap', '도시체인지', 2, 'gold', '상대 도시와 내 도시 맞교환'],
+  ['olympicHost', '올림픽 개최', 1, 'silver', '10만 내고 원하는 내 도시에 개최'],
+  ['goStart', '출발지로 GO', 1, 'silver', '출발지로 이동해 월급, 내 도시에 건설'],
+  ['bonusGo', '보너스 게임', 1, 'silver', '보너스 게임으로 이동'],
+  ['quake', '지진', 1, 'silver', '상대 도시의 가장 비싼 건물 파괴'],
+  ['blackout', '도시정전', 1, 'silver', '도시 통행료 무료 (방문하면 해제)'],
+  ['dust', '황사', 1, 'silver', '도시 통행료 50% (방문하면 해제)'],
+  ['coupon', '할인쿠폰', 2, 'silver', '통행료 50% 할인 (보관)'],
+  ['escape', '무인도 탈출', 1, 'silver', '무인도에서 바로 탈출 (보관)'],
+  ['shield', '방패', 2, 'silver', '상대 공격 방어 (보관)'],
+  ['taxGo', '강제징수', 2, 'bronze', '국세청으로 이동해 세금 20만'],
+  ['donate', '도시기부', 2, 'bronze', '내 도시 하나를 상대에게'],
+  ['olympicTour', '올림픽 관광', 1, 'bronze', '올림픽 개최지로 이동해 통행료'],
+  ['islandTrip', '무인도 탐험', 1, 'bronze', '무인도로 즉시 이동 (월급 없음)'],
+];
+const CARD = Object.fromEntries(FORTUNE.map(([key, name, count, tier, desc]) => [key, { key, name, count, tier, desc }]));
+const KEEP = ['booster', 'angel', 'coupon', 'escape', 'shield'];
+const JAIL_TURNS = 3;
+
+// 남은 카드 더미: 27장에서 누가 보관 중인 카드를 뺀 것
+function deck(room) {
+  const held = {};
+  for (const p of room.players) for (const k of [p.card, p.pendingCard]) if (k) held[k] = (held[k] || 0) + 1;
+  const out = [];
+  for (const c of FORTUNE) for (let i = 0; i < c[2] - (held[c[0]] || 0); i++) out.push(c[0]);
+  return out;
+}
+
+function validDice(d) {
+  return Array.isArray(d) && d.length === 2 && d.every((x) => Number.isInteger(x) && x >= 1 && x <= 6);
+}
+
+// 말을 시계방향으로 to 칸까지 이동. 출발지를 지나거나 도착하면 월급 (월급 부스터 보관 중이면 2배로 쓰고 반납)
+function moveTo(room, p, to, deltas, salary) {
+  const from = p.pos || 0;
+  const passed = salary !== false && (to < from || (to === 0 && from !== 0));
+  p.pos = to;
+  if (!passed) return '';
+  const boost = p.card === 'booster';
+  if (boost) p.card = null;
+  const amt = boost ? SALARY * 2 : SALARY;
+  deltas[p.id] = (deltas[p.id] || 0) + amt;
+  p.laps++;
+  return ` · 출발지 통과 월급 +${fmt(amt)}${boost ? ' (월급 부스터)' : ''}`;
+}
+
+function appMode(room) {
+  return room.mode === 'app';
+}
+function requireTurn(room, p) {
+  if (appMode(room) && room.phase === 'turns' && room.turn && room.turn.pid !== p.id) {
+    throw new GameError(`지금은 ${pname(room, room.turn.pid)}님 차례예요.`);
+  }
+}
+function nextTurn(room) {
+  const alive = room.order.filter((id) => room.players.some((p) => p.id === id && !p.bankrupt));
+  if (!alive.length) return;
+  const i = alive.indexOf(room.turn && room.turn.pid);
+  room.turn = { pid: alive[(i + 1) % alive.length], rolled: false, again: false, doubles: 0 };
+}
+
 const PAY = {
   bail: [BAIL, '무인도 보석금'],
   tax: [TAX, '국세청 세금'],
@@ -439,6 +520,207 @@ const actions = {
     const other = room.players.find((p) => p.color === a.color && p.id !== actorId);
     if (other) throw new GameError(`${other.name}님이 이미 고른 색이에요.`);
     getPlayer(room, actorId).color = a.color;
+  },
+
+  // 순서 정하기: 모두 주사위를 굴려 높은 사람부터. 같으면 그 사람들만 다시
+  orderRoll(room, actorId, a) {
+    requirePlaying(room);
+    if (room.phase !== 'order') throw new GameError('순서 정하기가 끝났어요.');
+    if (!validDice(a.dice)) throw new GameError('주사위 값이 올바르지 않습니다.');
+    if (!(actorId in room.orderRolls) || room.orderRolls[actorId] !== null) throw new GameError('이미 굴렸어요. 다른 사람을 기다려 주세요.');
+    const p = getPlayer(room, actorId);
+    const sum = a.dice[0] + a.dice[1];
+    room.orderRolls[actorId] = sum;
+    (room.orderScore[actorId] = room.orderScore[actorId] || []).push(sum);
+    const tx = record(room, actorId, 'orderRoll', `${p.name} 순서 정하기 🎲 ${a.dice[0]}+${a.dice[1]} = ${sum}`, {});
+    tx.dice = a.dice;
+    if (Object.values(room.orderRolls).some((v) => v === null)) return;
+    // 모두 굴렸으면, 점수가 완전히 같은 사람들끼리만 다시
+    const key = (id) => room.orderScore[id].join(',');
+    const ids = room.players.map((x) => x.id);
+    const tied = ids.filter((id) => ids.some((o) => o !== id && key(o) === key(id)));
+    if (tied.length) {
+      room.orderRolls = Object.fromEntries(tied.map((id) => [id, null]));
+      record(room, actorId, 'info', `동점! ${tied.map((id) => pname(room, id)).join(', ')}님은 다시 굴려요.`, {});
+      return;
+    }
+    const cmp = (x, y) => {
+      const A = room.orderScore[x];
+      const B = room.orderScore[y];
+      for (let i = 0; i < Math.max(A.length, B.length); i++) if ((B[i] || 0) !== (A[i] || 0)) return (B[i] || 0) - (A[i] || 0);
+      return 0;
+    };
+    room.order = ids.sort(cmp);
+    room.phase = 'turns';
+    room.orderRolls = {};
+    room.turn = { pid: room.order[0], rolled: false, again: false, doubles: 0 };
+    record(room, actorId, 'info', `순서: ${room.order.map((id) => pname(room, id)).join(' → ')}`, {});
+  },
+
+  // 주사위 굴려서 이동 (한 칸씩 움직이는 건 화면에서)
+  roll(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    if (!validDice(a.dice)) throw new GameError('주사위 값이 올바르지 않습니다.');
+    const app = appMode(room);
+    const t = room.turn;
+    if (app) {
+      if (room.phase !== 'turns') throw new GameError('먼저 순서를 정해요.');
+      requireTurn(room, p);
+      if (t.rolled && !t.again) throw new GameError('이번 차례에는 이미 굴렸어요. "차례 끝"을 눌러 주세요.');
+      if (p.travel) throw new GameError('세계여행 중이에요. 갈 곳을 골라 주세요.');
+    }
+    const [d1, d2] = a.dice;
+    const sum = d1 + d2;
+    const dbl = d1 === d2;
+    const before = snapshot(room);
+    const deltas = {};
+    const from = p.pos || 0;
+    let text = `${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
+    if (app) {
+      t.rolled = true;
+      t.again = false;
+      if (p.jail > 0) {
+        // 무인도: 더블이면 탈출해서 이동 (추가로 굴리지 않음), 아니면 한 차례 쉼
+        if (!dbl) {
+          p.jail--;
+          const tx = record(room, actorId, 'roll', `${text} · 무인도 탈출 실패 (남은 ${p.jail}차례)`, {}, before);
+          Object.assign(tx, { dice: a.dice, from, to: from });
+          return;
+        }
+        p.jail = 0;
+        text += ' · 무인도 탈출';
+      } else if (dbl) {
+        t.doubles++;
+        if (t.doubles >= 3) {
+          // 더블 패널티: 세 번 연속 더블이면 무인도로 즉시
+          p.pos = POS.island;
+          p.jail = JAIL_TURNS;
+          const tx = record(room, actorId, 'roll', `${text} · 더블 3번! 무인도로 즉시 이동`, {}, before);
+          Object.assign(tx, { dice: a.dice, from, to: POS.island, jump: true });
+          return;
+        }
+        t.again = true;
+      }
+    }
+    const to = (from + sum) % SPACES.length;
+    text += moveTo(room, p, to, deltas);
+    text += ` → ${SPACES[to].name}`;
+    if (app && to === POS.island) {
+      p.jail = JAIL_TURNS;
+      t.again = false;
+      text += ` (${JAIL_TURNS}차례 쉼)`;
+    }
+    if (app && to === POS.travel) {
+      p.travel = true;
+      t.again = false;
+      text += ' (다음 차례에 세계여행)';
+    }
+    const tx = record(room, actorId, 'roll', text, deltas, before);
+    Object.assign(tx, { dice: a.dice, from, to });
+  },
+
+  // 세계여행: 비용 10만 내고 원하는 칸으로 (출발지를 지나면 월급)
+  travelTo(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    requireTurn(room, p);
+    const to = toInt(a.to, '칸');
+    if (to < 0 || to >= SPACES.length || to === POS.travel) throw new GameError('갈 곳을 골라 주세요.');
+    ensureFunds(p, TRAVEL);
+    const before = snapshot(room);
+    const deltas = { [p.id]: -TRAVEL };
+    const from = p.pos || 0;
+    const note = moveTo(room, p, to, deltas);
+    p.travel = false;
+    if (appMode(room) && room.turn) Object.assign(room.turn, { rolled: true, again: false });
+    if (appMode(room) && to === POS.island) p.jail = JAIL_TURNS;
+    const tx = record(room, actorId, 'roll', `${p.name} ✈️ 세계여행 → ${SPACES[to].name} -${fmt(TRAVEL)}${note}`, deltas, before);
+    Object.assign(tx, { from, to, jump: true });
+  },
+
+  // 차례 끝 (본인 또는 방장)
+  endTurn(room, actorId) {
+    requirePlaying(room);
+    if (!appMode(room) || room.phase !== 'turns') throw new GameError('차례를 관리하지 않는 방이에요.');
+    const t = room.turn;
+    if (t.pid !== actorId && room.hostId !== actorId) throw new GameError('본인 차례만 끝낼 수 있어요.');
+    const p = getPlayer(room, t.pid);
+    if (!t.rolled && !p.bankrupt && actorId !== room.hostId) throw new GameError('먼저 주사위를 굴려 주세요.');
+    const before = snapshot(room);
+    nextTurn(room);
+    record(room, actorId, 'turn', `${p.name} 차례 끝 → ${pname(room, room.turn.pid)} 차례`, {}, before);
+  },
+
+  // 포춘카드 뽑기 (pick: 0~1 난수 → 남은 카드 중 하나)
+  draw(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    requireTurn(room, p);
+    if (p.pendingCard) throw new GameError('먼저 보관할 카드를 골라 주세요.');
+    const cards = deck(room);
+    if (!cards.length) throw new GameError('남은 포춘카드가 없어요.');
+    const r = Math.max(0, Math.min(0.999999, Number(a.pick) || 0));
+    const key = cards[Math.floor(r * cards.length)];
+    const c = CARD[key];
+    const before = snapshot(room);
+    const deltas = {};
+    let text = `${p.name} 🃏 포춘카드: ${c.name}`;
+    const from = p.pos || 0;
+    let to = null;
+    if (KEEP.includes(key)) {
+      if (p.card) {
+        p.pendingCard = key;
+        text += ` (이미 ${CARD[p.card].name} 보관 중 — 하나만 보관)`;
+      } else {
+        p.card = key;
+        text += ' (보관)';
+      }
+    } else if (key === 'goStart') {
+      to = POS.start;
+    } else if (key === 'bonusGo') {
+      to = POS.bonus;
+    } else if (key === 'taxGo') {
+      to = POS.tax;
+    } else if (key === 'travelInvite') {
+      to = POS.travel;
+    } else if (key === 'islandTrip') {
+      to = POS.island;
+    } else if (key === 'olympicTour' && room.olympic) {
+      to = TILE[room.olympic.tileId].pos;
+    }
+    if (to !== null) {
+      text += moveTo(room, p, to, deltas, key !== 'islandTrip') + ` → ${SPACES[to].name}`;
+      if (appMode(room) && key === 'islandTrip') p.jail = JAIL_TURNS;
+      if (appMode(room) && key === 'travelInvite') p.travel = true;
+      if (appMode(room) && room.turn && (key === 'islandTrip' || key === 'travelInvite')) room.turn.again = false;
+    }
+    if (key === 'olympicTour' && !room.olympic) text += ' — 개최지가 없어 패스';
+    const tx = record(room, actorId, 'fortune', text, deltas, before);
+    tx.card = key;
+    if (to !== null) Object.assign(tx, { from, to, jump: true });
+  },
+
+  // 보관 카드가 2장이 되면 하나만 남김
+  keepCard(room, actorId, a) {
+    const p = activePlayer(room, actorId);
+    if (!p.pendingCard) throw new GameError('고를 카드가 없어요.');
+    const before = snapshot(room);
+    const drop = a.keep === 'new' ? p.card : p.pendingCard;
+    if (a.keep === 'new') p.card = p.pendingCard;
+    p.pendingCard = null;
+    record(room, actorId, 'card', `${p.name} ${CARD[p.card].name} 보관, ${CARD[drop].name} 반납`, {}, before);
+  },
+
+  // 무인도 탈출 카드 사용
+  useEscape(room, actorId) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    if (p.card !== 'escape') throw new GameError('무인도 탈출 카드가 없어요.');
+    const before = snapshot(room);
+    p.card = null;
+    p.jail = 0;
+    record(room, actorId, 'card', `${p.name} 무인도 탈출 카드 사용`, {}, before);
   },
 
   // 내 말 옮기기 (돈 거래 없음, 기록 안 남김)
@@ -474,10 +756,17 @@ const actions = {
     const deltas = {};
     for (const p of room.players) {
       p.money = 0;
-      p.laps = 0;
-      p.pos = 0;
-      p.bankrupt = false;
+      Object.assign(p, { laps: 0, pos: 0, bankrupt: false, jail: 0, travel: false, card: null, pendingCard: null });
       deltas[p.id] = START_MONEY;
+    }
+    room.order = [];
+    room.turn = null;
+    room.orderRolls = {};
+    room.orderScore = {};
+    room.phase = null;
+    if (appMode(room)) {
+      room.phase = 'order';
+      room.orderRolls = Object.fromEntries(room.players.map((p) => [p.id, null]));
     }
     const names = room.festival.map((id) => TILE[id].name).join(', ');
     record(room, actorId, 'start', `게임 시작! 모두 ${fmt(START_MONEY)} · 축제도시: ${names}`, deltas);
@@ -554,9 +843,14 @@ const actions = {
     const { tile, prop } = tileOf(room, a.tileId, 'owned');
     if (prop.owner === p.id) throw new GameError('내 땅에는 통행료를 내지 않습니다.');
     const owner = activePlayer(room, prop.owner);
+    if (appMode(room)) {
+      if (a.angel && p.card !== 'angel') throw new GameError('천사 카드가 없어요.');
+      if (a.coupon && p.card !== 'coupon') throw new GameError('할인쿠폰이 없어요.');
+    }
     const info = tollInfo(room, tile.id, { angel: a.angel, coupon: a.coupon });
     ensureFunds(p, info.amount, true);
     const before = snapshot(room);
+    if (appMode(room) && (a.angel || a.coupon)) p.card = null;
     visit(room, tile, prop);
     const detail = info.parts.length ? ` (${info.parts.join(' · ')})` : '';
     record(room, actorId, 'toll', `[${tile.name}] ${p.name} → ${owner.name} 통행료 ${fmt(info.amount)}${detail}`, {
@@ -605,6 +899,7 @@ const actions = {
     if (!item) throw new GameError('알 수 없는 항목입니다.');
     ensureFunds(p, item[0], a.what === 'tax');
     const before = snapshot(room);
+    if (a.what === 'bail') p.jail = 0;
     record(room, actorId, 'pay', `${p.name} ${item[1]} -${fmt(item[0])}`, { [p.id]: -item[0] }, before);
   },
 
@@ -669,6 +964,7 @@ const actions = {
   // 전염병: 고른 도시와 같은 색 도시 모두 통행료 50% (방문자가 생기면 해제)
   epidemic(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, { city: true });
+    if (!p) return;
     const before = snapshot(room);
     const hit = BOARD.filter((t) => t.kind === 'city' && t.group === tile.group && room.props[t.id]);
     for (const t of hit) room.effects[t.id] = { ...room.effects[t.id], epidemic: true };
@@ -676,12 +972,14 @@ const actions = {
   },
   dust(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, {});
+    if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], dust: true };
     record(room, actorId, 'card', `${p.name} 황사 → [${tile.name}] 통행료 50%`, {}, before);
   },
   blackout(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, {});
+    if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], blackout: true };
     record(room, actorId, 'card', `${p.name} 도시정전 → [${tile.name}] 무료통과`, {}, before);
@@ -689,6 +987,7 @@ const actions = {
   // 지진: 상대 도시의 가장 비싼 건물 하나 파괴
   quake(room, actorId, a) {
     const { p, tile, prop } = attackTarget(room, actorId, a.tileId, { city: true, noLandmark: '공격' });
+    if (!p) return;
     const before = snapshot(room);
     const k = destroyTop(tile, prop);
     if (!k) throw new GameError('파괴할 건물이 없습니다.');
@@ -697,6 +996,7 @@ const actions = {
   // 외계인 침공: 같은 색 도시마다 가장 비싼 건물 하나씩 파괴 (랜드마크 도시 제외)
   alien(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, { city: true });
+    if (!p) return;
     const before = snapshot(room);
     const done = [];
     for (const t of BOARD.filter((x) => x.kind === 'city' && x.group === tile.group)) {
@@ -709,6 +1009,7 @@ const actions = {
   // 강제매각: 상대 도시를 없애고, 주인은 은행에서 매각비용을 받음
   forceSell(room, actorId, a) {
     const { p, tile, owner } = attackTarget(room, actorId, a.tileId, { noLandmark: '공격' });
+    if (!p) return;
     const amount = sellPrice(room, tile.id);
     const before = snapshot(room);
     removeProp(room, tile.id);
@@ -717,6 +1018,7 @@ const actions = {
   // 도시체인지: 상대 도시 하나와 내 도시 하나를 맞교환 (랜드마크 도시 제외)
   swap(room, actorId, a) {
     const { p, tile, prop, owner } = attackTarget(room, actorId, a.tileId, { noLandmark: '교환' });
+    if (!p) return;
     const mine = tileOf(room, a.mineId, 'owned');
     if (mine.prop.owner !== p.id) throw new GameError('맞바꿀 내 도시를 골라 주세요.');
     noLandmark(mine.tile, mine.prop, '교환');
@@ -758,6 +1060,7 @@ const actions = {
     p.bankrupt = true;
     record(room, actorId, 'bankrupt', text, deltas, before);
     lastSurvivor(room);
+    if (appMode(room) && room.phase === 'turns' && room.turn && room.turn.pid === p.id && room.status === 'playing') nextTurn(room);
   },
 
   // 방장: 잔액 직접 수정
@@ -778,9 +1081,10 @@ const actions = {
     const tx = lastUndoable(room);
     if (!tx) throw new GameError('되돌릴 거래가 없습니다.');
     if (tx.actorId !== actorId && room.hostId !== actorId) throw new GameError(`가장 최근 거래는 ${pname(room, tx.actorId)}님 것이에요. 본인이나 방장만 되돌릴 수 있어요.`);
-    const pos = Object.fromEntries(room.players.map((p) => [p.id, p.pos])); // 말 위치는 그대로 둠
+    const pos = Object.fromEntries(room.players.map((p) => [p.id, p.pos]));
     Object.assign(room, JSON.parse(JSON.stringify(tx.before)));
-    for (const p of room.players) if (pos[p.id] !== undefined) p.pos = pos[p.id];
+    // 주사위·여행·포춘카드 이동은 말 위치도 되돌리고, 그 밖의 거래는 말 위치를 그대로 둠
+    if (!['roll', 'fortune'].includes(tx.kind)) for (const p of room.players) if (pos[p.id] !== undefined) p.pos = pos[p.id];
     tx.undone = true;
     delete tx.before;
     record(room, actorId, 'undo', `${pname(room, actorId)} 되돌리기: ${tx.text}`, {});
@@ -829,7 +1133,16 @@ function attackTarget(room, actorId, tileId, opt) {
   if (prop.owner === p.id) throw new GameError('상대방의 도시를 골라 주세요.');
   if (opt.city && tile.kind !== 'city') throw new GameError('일반도시를 골라 주세요.');
   if (opt.noLandmark) noLandmark(tile, prop, opt.noLandmark);
-  return { p, tile, prop, owner: getPlayer(room, prop.owner) };
+  const owner = getPlayer(room, prop.owner);
+  // 앱으로만 하는 방: 상대가 방패(없으면 천사)를 보관 중이면 자동으로 막음
+  if (appMode(room) && (owner.card === 'shield' || owner.card === 'angel')) {
+    const before = snapshot(room);
+    const used = CARD[owner.card].name;
+    owner.card = null;
+    record(room, actorId, 'card', `${owner.name}이(가) ${used} 카드로 ${p.name}의 공격을 막았어요`, {}, before);
+    return {};
+  }
+  return { p, tile, prop, owner };
 }
 
 const TILE_ACTIONS = ['buy', 'build', 'arrive', 'toll', 'takeover'];
@@ -859,7 +1172,14 @@ function publicState(room) {
     code: room.code,
     status: room.status,
     hostId: room.hostId,
-    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt }) => ({ id, name, color, money, laps, pos: pos || 0, bankrupt })),
+    mode: room.mode || 'mixed',
+    phase: room.phase || null,
+    orderRolls: room.orderRolls || {},
+    orderScore: room.orderScore || {},
+    order: room.order || [],
+    turn: room.turn || null,
+    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt, jail, travel, card, pendingCard }) =>
+      ({ id, name, color, money, laps, pos: pos || 0, bankrupt, jail: jail || 0, travel: !!travel, card: card || null, pendingCard: pendingCard || null })),
     props: room.props,
     olympic: room.olympic,
     festival: room.festival,
@@ -877,7 +1197,7 @@ function roomFromPublic(state) {
 
 const api = {
   MAN, START_MONEY, SALARY, BAIL, TAX, TRAVEL, OLYMPIC_COST, SPONSOR, BONUS, TOUR_PRICE, TOUR_TOLL, TOUR_SELL,
-  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
+  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
   GameError, createRoom, addPlayer, findByName, applyAction, publicState, roomFromPublic,
   fmt, tollInfo, takeoverPrice, sellPrice, tourLevel, hasMonopoly, canBuild, maxBuilding, builtItems, lastUndoable,
 };

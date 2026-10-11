@@ -203,6 +203,7 @@
       if (prevStatus === 'playing' && s.status === 'ended') vibrate([100, 50, 100, 50, 200]);
     }
     lastSeenTx = s.log.length ? s.log[s.log.length - 1].id : 0;
+    if (firstState) anim.seen = lastSeenTx; // 들어오기 전 장면은 다시 보여 주지 않음
     firstState = false;
     render();
   }
@@ -218,6 +219,7 @@
       return;
     }
     if (state.status === 'lobby') return renderLobby();
+    if (!anim.busy) setTimeout(scanAnimations, 0);
     if (state.status === 'playing') return renderGame();
     return renderEnded();
   }
@@ -281,6 +283,12 @@
 
   // ---------- 처음 화면 ----------
   let joinFromHome = () => {};
+  let newMode = 'mixed';
+  const MODE_NAME = { app: '📱 앱으로만', mixed: '🎲 앱 + 실물' };
+  const MODE_HELP = {
+    mixed: '실물 보드·주사위로 하면서 돈 계산은 앱으로. 순서는 자유롭게, 앱 주사위도 쓸 수 있어요.',
+    app: '주사위·차례·포춘카드까지 앱이 관리해요. 시작하면 주사위로 순서를 정해요.',
+  };
   function renderHome() {
     const params = new URLSearchParams(location.search);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
@@ -295,7 +303,11 @@
         <div class="row"><input type="tel" id="code" inputmode="numeric" maxlength="4" placeholder="1234" value="${esc(params.get('room') || '')}">
           <button class="btn" id="join">들어가기</button></div>
       </div>
-      <button class="btn accent" id="create">새 방 만들기 (방장)</button>
+      <div class="card"><h2>새 방 만들기 <small class="muted">방장이 됩니다</small></h2>
+        <div class="chips modes"><button class="chip on" data-mode="mixed">🎲 앱 + 실물</button><button class="chip" data-mode="app">📱 앱으로만</button></div>
+        <div class="sub" id="modehelp"></div>
+        <button class="btn accent" id="create">방 만들기</button>
+      </div>
       <div class="err center" id="err"></div>
       <button class="btn secondary mt" id="rules">규칙 요약</button>
     </div>`;
@@ -316,7 +328,7 @@
       const name = getName(); if (!name) return;
       try {
         busy(true, '방을 만드는 중...');
-        const r = await N.createRoom(name);
+        const r = await N.createRoom(name, newMode);
         saveSession(r.session);
         history.replaceState(null, '', N.shareUrl(r.session));
         connect(r.client);
@@ -338,6 +350,9 @@
       joinFromHome(code, N.brokerFromIndex(params.get('b')));
     };
     $app.querySelector('#rules').onclick = showRules;
+    const help = () => ($app.querySelector('#modehelp').textContent = MODE_HELP[newMode]);
+    bindChoice($app, 'mode', (v) => { newMode = v; help(); });
+    help();
     startRoomWatch();
     renderRoomList();
   }
@@ -364,7 +379,7 @@
     if (!roomList.length) { el.innerHTML = '<div class="muted">지금 열려 있는 방이 없어요.</div>'; return; }
     el.innerHTML = `<ul class="plist">${roomList.map((r) => `<li>
       <span class="name">${esc(r.host)}의 방 <span class="tag">${esc(r.code)}</span>
-        <span class="muted">${r.players.map(esc).join(', ')} · ${r.players.length}/4${r.status === 'playing' ? ' · 게임 중' : ''}</span></span>
+        <span class="muted">${MODE_NAME[r.mode] || MODE_NAME.mixed} · ${r.players.map(esc).join(', ')} · ${r.players.length}/4${r.status === 'playing' ? ' · 게임 중' : ''}</span></span>
       ${r.status === 'playing'
         ? `<button class="btn small secondary" data-join="${esc(r.code)}" data-broker="${esc(r.broker)}">이어하기</button>`
         : r.players.length < 4 ? `<button class="btn small" data-join="${esc(r.code)}" data-broker="${esc(r.broker)}">참가</button>` : '<span class="tag">가득 참</span>'}
@@ -379,6 +394,7 @@
       <div class="card center">
         <div class="muted">방 번호</div>
         <div class="bigcode">${esc(state.code)}</div>
+        <div class="sub">${MODE_NAME[state.mode]} — ${MODE_HELP[state.mode]}</div>
         <button class="btn secondary small" id="share2">📤 참가 링크 보내기</button>
       </div>
       <div class="card">
@@ -452,7 +468,7 @@
   }
   // 그 칸에 있는 말 (오른쪽 위 동그라미)
   function piecesAt(pos) {
-    const here = state.players.filter((p) => !p.bankrupt && (p.pos || 0) === pos);
+    const here = state.players.filter((p) => !p.bankrupt && (p.id in anim.pos ? anim.pos[p.id] : p.pos || 0) === pos);
     return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
   }
   function spaceButton(sp, attr) {
@@ -462,7 +478,7 @@
   let view = (() => { try { return localStorage.getItem('marble-view') || 'real'; } catch { return 'real'; } })();
   function boardHtml(filter) {
     const cell = (sp) => {
-      if (sp.kind === 'special') return spaceButton(sp, filter ? 'disabled' : '');
+      if (sp.kind === 'special') return spaceButton(sp, filter ? (filter(sp) ? `data-pickpos="${sp.pos}"` : 'disabled') : '');
       return filter ? tileButton(sp, filter(sp) ? `data-pick="${sp.id}"` : 'disabled') : tileButton(sp);
     };
     if (view === 'real') {
@@ -499,8 +515,13 @@
         <div class="me ${m.bankrupt ? 'bankrupt' : ''}" style="--pc:${pc(m)}">
           <div class="who">${esc(m.name)}${host ? ' · 방장' : ''} · ${m.bankrupt ? '파산' : `${m.laps + 1}번째 턴 (${G.ITEM_NAMES[G.maxBuilding(m)]}까지 건설)`}</div>
           <div class="bal">${fmt(m.money)} <small>마블</small></div>
+          ${myStatus(m)}
         </div>
-        ${m.bankrupt ? '' : `<div class="actions">
+        ${turnBar()}
+        ${m.bankrupt ? '' : state.mode === 'app' ? `<div class="actions app">
+          <button class="act" data-a="transfer">💸<span>송금</span></button>
+          <button class="act" data-a="fortune">🃏<span>포춘카드 목록</span></button>
+        </div>` : `<div class="actions">
           <button class="act" data-a="salary">🏁<span>월급 30만</span></button>
           <button class="act" data-a="bail">🏝️<span>보석금 20만</span></button>
           <button class="act" data-a="tax">🧾<span>국세청 20만</span></button>
@@ -511,7 +532,8 @@
           <button class="act" data-a="transfer">💸<span>송금</span></button>
         </div>`}
         <div class="card board"><div class="loghead"><span class="sub">도착한 칸을 누르세요${view === 'real' ? '' : ' · 🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전'}</span>
-          <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>${boardHtml()}</div>
+          <span class="row tight">${m.bankrupt ? '' : `<button class="btn small accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
+          <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></span></div>${boardHtml()}</div>
       </section>
       <section>
         <div class="card">
@@ -542,6 +564,9 @@
       try { localStorage.setItem('marble-view', view); } catch {}
       render();
     };
+    if (q('#dice')) q('#dice').onclick = rollDice;
+    bindTurnBar();
+    if (m.pendingCard && !$modal.innerHTML) keepPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -651,8 +676,8 @@
     openModal(`${head}${priceTable(t)}
       <div class="preview"><span>낼 통행료</span><b id="pv"></b></div>
       <div class="sub" id="parts"></div>
-      <div class="checks"><label class="check"><input type="checkbox" id="angel"> 😇 천사 카드 (면제)</label>
-        <label class="check"><input type="checkbox" id="coupon"> 🎫 할인쿠폰 (50%)</label></div>
+      <div class="checks">${state.mode !== 'app' || m.card === 'angel' ? '<label class="check"><input type="checkbox" id="angel"> 😇 천사 카드 (면제)</label>' : '<input type="checkbox" id="angel" hidden>'}
+        ${state.mode !== 'app' || m.card === 'coupon' ? '<label class="check"><input type="checkbox" id="coupon"> 🎫 할인쿠폰 (50%)</label>' : '<input type="checkbox" id="coupon" hidden>'}</div>
       <div class="err" id="err"></div>
       <div class="row"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="pay">${esc(owner.name)}에게 통행료 내기</button></div>
       <div class="sub center">${canTake ? `통행료를 낸 뒤 인수할 수 있어요 (${fmt(G.takeoverPrice(state, t.id))})` : t.kind === 'tour' ? '관광지는 인수할 수 없어요' : '랜드마크가 있어 인수할 수 없어요'}</div>`, (root) => {
@@ -719,6 +744,7 @@
       <div class="err" id="err"></div>
       <button class="btn secondary wide" data-close>취소</button>`, (root) => {
       root.querySelectorAll('[data-pick]').forEach((b) => (b.onclick = () => onPick(b.dataset.pick)));
+      root.querySelectorAll('[data-pickpos]').forEach((b) => (b.onclick = () => onPick(G.SPACES[Number(b.dataset.pickpos)])));
     });
   }
   const mineF = (t) => prop(t.id) && prop(t.id).owner === session.playerId;
@@ -742,10 +768,11 @@
       pickTile('🏅 올림픽을 개최할 내 도시', `개최비용 ${fmt(G.OLYMPIC_COST)}. 올림픽은 한 곳에만 — 같은 도시는 ×3·×4·×5로, 다른 도시는 마크를 옮겨 ×2`, (t) => t.kind === 'city' && mineF(t), (id) => run({ type: 'olympic', tileId: id, ...(Number.isInteger(at) ? { at } : {}) }));
     },
     bonus() {
-      openModal(`<h3>🪙 보너스 게임</h3><div class="sub">코인 앞뒤를 연속 몇 번 맞혔나요? (도전하다 틀리면 0)</div>
+      openModal(`<button class="hbtn" id="coin">🪙 앱에서 하기</button><h3>🪙 보너스 게임</h3><div class="sub">코인 앞뒤를 연속 몇 번 맞혔나요? (도전하다 틀리면 0)</div>
         <div class="chips big">${['실패', '1회 40만', '2회 80만', '3회 160만'].map((l, i) => `<button class="chip" data-w="${i}">${l}</button>`).join('')}</div>
         <button class="btn secondary wide" data-close>취소</button>`, (root) => {
         root.querySelectorAll('[data-w]').forEach((b) => (b.onclick = () => run({ type: 'bonus', wins: Number(b.dataset.w) })));
+        root.querySelector('#coin').onclick = coinGame;
       });
     },
     transfer() {
@@ -796,10 +823,15 @@
   }
 
   function fortuneDialog() {
-    openModal(`<h3>🃏 포춘카드</h3>
+    openModal(`<button class="hbtn" id="draw">🎴 랜덤 뽑기</button><h3>🃏 포춘카드</h3>
+      <div class="sub">남은 카드 ${G.deck(state).length}장${state.mode === 'app' ? ' · 랜덤 뽑기를 누르세요' : ' · 실물 카드를 뽑았다면 아래에서 고르세요'}</div>
       ${CARDS.map(([group, list], gi) => `<div class="sub">${group}</div><div class="cards">${list.map(([name, tier, desc, fn], ci) =>
         `<button class="fcard ${tier} ${fn ? '' : 'info'}" data-c="${gi}-${ci}"><b>${name}</b><small>${desc}</small></button>`).join('')}</div>`).join('')}
       <button class="btn secondary wide" data-close>닫기</button>`, (root) => {
+      root.querySelector('#draw').onclick = () => {
+        autoNext = true;
+        run({ type: 'draw', pick: Math.random() });
+      };
       root.querySelectorAll('[data-c]').forEach((b) => (b.onclick = () => {
         const [gi, ci] = b.dataset.c.split('-').map(Number);
         const card = CARDS[gi][1][ci];
@@ -821,6 +853,281 @@
       openModal(`<h3>🎁 ${esc(G.TILE[id].name)}을(를) 누구에게?</h3>${playerChips(others(), null)}
         <button class="btn secondary wide" data-close>취소</button>`, (root) => bindChoice(root, 'p', (to) => run({ type: 'donate', tileId: id, to })));
     });
+  }
+
+  // ---------- 주사위 · 차례 ----------
+  const r6 = () => 1 + Math.floor(Math.random() * 6);
+  let autoNext = false; // 내가 굴리거나 뽑은 뒤 도착한 칸 화면을 자동으로 열기
+
+  function canRoll() {
+    const m = me();
+    if (!m || m.bankrupt || state.status !== 'playing') return false;
+    if (state.mode !== 'app') return true;
+    if (state.phase === 'order') return state.orderRolls[m.id] === null;
+    const t = state.turn;
+    return !!t && t.pid === m.id && (!t.rolled || t.again) && !m.travel;
+  }
+  function diceLabel() {
+    const m = me();
+    if (state.mode === 'app' && state.phase === 'order') return '순서 정하기';
+    if (m.jail > 0 && state.mode === 'app') return '주사위 (더블이면 탈출)';
+    if (state.turn && state.turn.again && state.turn.pid === m.id) return '한 번 더!';
+    return '주사위 굴리기';
+  }
+  function rollDice() {
+    if (!canRoll() || anim.busy) return;
+    const dice = [r6(), r6()];
+    if (state.mode === 'app' && state.phase === 'order') return run({ type: 'orderRoll', dice });
+    autoNext = true;
+    run({ type: 'roll', dice });
+  }
+
+  function myStatus(m) {
+    const out = [];
+    if (m.card) out.push(`🃏 ${G.CARD[m.card].name} 보관`);
+    if (m.jail > 0) out.push(`🏝️ 무인도 (${m.jail}차례 남음)`);
+    if (m.travel) out.push('✈️ 세계여행 대기');
+    return out.length ? `<div class="who">${out.join(' · ')}</div>` : '';
+  }
+
+  // 앱으로만 하는 방: 순서 정하기 / 지금 차례
+  function turnBar() {
+    if (state.mode !== 'app' || state.status !== 'playing') return '';
+    if (state.phase === 'order') {
+      return `<div class="card turnbar"><b>🎲 순서 정하기</b><span class="muted">주사위를 굴려 높은 사람부터 시작해요</span>
+        <span class="grow"></span>${state.players.map((p) => {
+          const sc = state.orderScore[p.id] || [];
+          const wait = state.orderRolls[p.id] === null;
+          return `<span class="tag"><span class="dot" style="background:${pc(p)}"></span> ${esc(p.name)} ${sc.length ? sc.join('/') : ''}${wait ? ' ⏳' : ''}</span>`;
+        }).join('')}</div>`;
+    }
+    const t = state.turn;
+    if (!t) return '';
+    const cur = player(t.pid);
+    const mine = t.pid === session.playerId;
+    const m = me();
+    const btns = [];
+    if (mine && m.travel) btns.push(`<button class="btn small accent" id="tgo">✈️ 갈 곳 고르기 (${fmt(G.TRAVEL)})</button>`);
+    if (mine && m.jail > 0 && !t.rolled) {
+      btns.push(`<button class="btn small secondary" id="tbail">보석금 ${fmt(G.BAIL)}</button>`);
+      if (m.card === 'escape') btns.push('<button class="btn small secondary" id="tesc">탈출 카드</button>');
+    }
+    if (mine) btns.push(`<button class="btn small" id="tend" ${t.rolled && !t.again ? '' : 'disabled'}>차례 끝</button>`);
+    else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
+    const note = mine
+      ? (m.travel ? '세계여행! 갈 곳을 고르세요' : m.jail > 0 && !t.rolled ? '무인도: 더블·보석금·탈출 카드로 나와요' : t.again ? '더블! 한 번 더 굴려요' : t.rolled ? '할 일을 마치면 차례 끝' : '주사위를 굴리세요')
+      : '';
+    return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
+      <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
+  }
+  function bindTurnBar() {
+    const q = (x) => $app.querySelector(x);
+    if (q('#tend')) q('#tend').onclick = () => run({ type: 'endTurn' });
+    if (q('#tbail')) q('#tbail').onclick = ACTIONS.bail;
+    if (q('#tesc')) q('#tesc').onclick = () => run({ type: 'useEscape' });
+    if (q('#tgo')) q('#tgo').onclick = () => pickTile('✈️ 세계여행 — 갈 곳 고르기', `비용 ${fmt(G.TRAVEL)} · 출발지를 지나면 월급`, (sp) => sp.pos !== G.POS.travel, (sp) => {
+      const pos = typeof sp === 'string' ? G.TILE[sp].pos : sp.pos;
+      autoNext = true;
+      run({ type: 'travelTo', to: pos });
+    });
+  }
+
+  // 도착한 칸 화면 자동으로 열기
+  function openLanding(pos) {
+    const sp = G.SPACES[pos];
+    if (!sp || me().bankrupt || state.status !== 'playing') return;
+    if (sp.kind !== 'special') return tileSheet(sp.id);
+    const m = me();
+    switch (sp.key) {
+      case 'start': return toast('출발지 도착! 내 도시를 눌러 건물을 지을 수 있어요.');
+      case 'bonus': return ACTIONS.bonus();
+      case 'island': return state.mode === 'app' ? toast('무인도! 3차례 동안 쉬어요.') : specialSheet(pos);
+      case 'card': return fortuneDialog();
+      case 'olympic': return myTiles().some((t) => t.kind === 'city') ? ACTIONS.olympic(pos) : toast('올림픽을 열 내 도시가 없어요.');
+      case 'travel': return toast(state.mode === 'app' ? '세계여행! 다음 차례에 원하는 곳으로 가요.' : '세계여행 칸이에요.');
+      case 'tax': return ACTIONS.tax();
+    }
+    return m;
+  }
+
+  // 뽑은 포춘카드 처리
+  function handleDrawn(key) {
+    const m = me();
+    if (m.pendingCard) return keepPrompt();
+    switch (key) {
+      case 'sponsor': return confirmBox('후원금! 모두에게서 10만씩 받아요.\n(10만이 없으면 가진 만큼)', { type: 'sponsor' }, '받기');
+      case 'epidemic': return attack('epidemic', '😷 전염병', (t) => t.kind === 'city');
+      case 'alien': return attack('alien', '👽 외계인 침공', (t) => t.kind === 'city');
+      case 'forceSell': return attack('forceSell', '🔨 강제매각', noLm);
+      case 'quake': return attack('quake', '🌋 지진', (t) => t.kind === 'city' && noLm(t));
+      case 'blackout': return attack('blackout', '⚡ 도시정전', () => true);
+      case 'dust': return attack('dust', '🌫️ 황사', () => true);
+      case 'swap': return swapDialog();
+      case 'donate': return donateDialog();
+      case 'olympicHost': return ACTIONS.olympic();
+      case 'goStart': return toast('출발지로! 월급을 받았어요. 내 도시를 눌러 건물을 지을 수 있어요.');
+      case 'bonusGo': return ACTIONS.bonus();
+      case 'taxGo': return ACTIONS.tax();
+      case 'olympicTour': return state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.');
+      case 'travelInvite': return toast('세계여행 칸으로! 다음 차례에 원하는 곳으로 가요.');
+      case 'islandTrip': return toast('무인도로 이동했어요.');
+      default: return toast(`${G.CARD[key].name} 카드를 보관했어요.`);
+    }
+  }
+
+  function keepPrompt() {
+    const m = me();
+    if (!m.pendingCard) return;
+    const a = G.CARD[m.card];
+    const b = G.CARD[m.pendingCard];
+    openModal(`<h3>🃏 보관 카드는 1장만</h3><div class="sub">하나는 반납해요. 어떤 카드를 가질까요?</div>
+      <div class="cards"><button class="fcard ${a.tier}" data-k="old"><b>${a.name}</b><small>${a.desc}</small></button>
+      <button class="fcard ${b.tier}" data-k="new"><b>${b.name} (새 카드)</b><small>${b.desc}</small></button></div>`, (root) => {
+      root.querySelectorAll('[data-k]').forEach((x) => (x.onclick = () => run({ type: 'keepCard', keep: x.dataset.k })));
+    });
+  }
+
+  // ---------- 보너스 게임 (앱에서 동전 앞뒤 맞히기) ----------
+  function coinGame() {
+    let wins = 0;
+    const flips = [];
+    const stage = () => {
+      const next = G.BONUS[wins];
+      openModal(`<h3>🪙 보너스 게임 ${wins ? `— ${wins}회 성공!` : ''}</h3>
+        <div class="coin" id="coin">🪙</div>
+        <div class="sub center">${wins ? `지금 그만하면 ${fmt(G.BONUS[wins - 1])} · ` : ''}맞히면 ${fmt(next)} · 틀리면 0</div>
+        <div class="row"><button class="btn accent" data-g="front">앞면</button><button class="btn accent" data-g="back">뒷면</button></div>
+        ${wins ? `<button class="btn secondary wide" id="stop">그만하고 ${fmt(G.BONUS[wins - 1])} 받기</button>` : ''}`, (root) => {
+        if (root.querySelector('#stop')) root.querySelector('#stop').onclick = () => finish();
+        root.querySelectorAll('[data-g]').forEach((b) => (b.onclick = () => flip(root, b.dataset.g)));
+      });
+    };
+    const flip = async (root, guess) => {
+      root.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      const coin = root.querySelector('#coin');
+      const side = Math.random() < 0.5 ? 'front' : 'back';
+      coin.classList.add('spin');
+      for (let i = 0; i < 12; i++) {
+        coin.textContent = i % 2 ? '앞' : '뒤';
+        await sleep(60 + i * 18);
+      }
+      coin.classList.remove('spin');
+      coin.textContent = side === 'front' ? '앞' : '뒤';
+      flips.push([guess, side]);
+      await sleep(600);
+      if (guess === side) {
+        wins++;
+        if (wins >= 3) return finish();
+        stage();
+      } else {
+        toast('틀렸어요! 이번 보너스는 0이에요.', 'err');
+        wins = 0;
+        finish();
+      }
+    };
+    const finish = () => run({ type: 'bonus', wins, flips });
+    stage();
+  }
+
+  // ---------- 주사위 · 이동 · 카드 장면 (모든 기기에서 같이 보임) ----------
+  const anim = { pos: {}, busy: false, queue: [], seen: 0 };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const PIPS = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9] };
+  const dieHtml = (n) => `<div class="die">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => `<i class="${PIPS[n].includes(i) ? 'on' : ''}"></i>`).join('')}</div>`;
+  function fxBox() {
+    let el = document.getElementById('fx');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'fx';
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function scanAnimations() {
+    if (!state || !state.log) return;
+    for (const tx of state.log) {
+      if (tx.id <= anim.seen) continue;
+      anim.seen = tx.id;
+      if (['roll', 'orderRoll', 'fortune'].includes(tx.kind) && !tx.undone) anim.queue.push(tx);
+    }
+    if (!anim.busy) playNext();
+  }
+
+  async function playNext() {
+    const tx = anim.queue.shift();
+    if (!tx) return;
+    anim.busy = true;
+    const who = state.players.find((p) => p.id === tx.actorId);
+    const name = who ? who.name : '';
+    try {
+      if (tx.dice) await showDice(name, tx.dice, who);
+      if (tx.card) await showCard(name, tx.card);
+      if (tx.to !== undefined && tx.from !== undefined && tx.to !== tx.from) await walk(tx.actorId, tx.from, tx.to, tx.jump);
+    } finally {
+      anim.busy = false;
+    }
+    if (tx.actorId === session.playerId && autoNext && !anim.queue.length) {
+      autoNext = false;
+      if (tx.kind === 'fortune') handleDrawn(tx.card);
+      else if (tx.kind === 'roll' && tx.to !== tx.from && !/더블 3번/.test(tx.text)) openLanding(tx.to);
+    }
+    playNext();
+  }
+
+  async function showDice(name, dice, who) {
+    const el = fxBox();
+    el.className = 'show';
+    el.innerHTML = `<div class="fxcard"><div class="fxname"><span class="dot" style="background:${pc(who)}"></span> ${esc(name)} 🎲</div>
+      <div class="dice"><span id="d1"></span><span id="d2"></span></div><div class="fxsum" id="dsum">&nbsp;</div></div>`;
+    const d1 = el.querySelector('#d1');
+    const d2 = el.querySelector('#d2');
+    // 3초 동안 숫자가 빠르게 바뀌다가 천천히 멈춤
+    const start = Date.now();
+    while (Date.now() - start < 3000) {
+      d1.innerHTML = dieHtml(r6());
+      d2.innerHTML = dieHtml(r6());
+      const k = (Date.now() - start) / 3000;
+      await sleep(50 + k * k * 380);
+    }
+    d1.innerHTML = dieHtml(dice[0]);
+    d2.innerHTML = dieHtml(dice[1]);
+    el.querySelector('#dsum').textContent = `${dice[0]} + ${dice[1]} = ${dice[0] + dice[1]}${dice[0] === dice[1] ? ' 더블!' : ''}`;
+    await sleep(1100);
+    el.className = '';
+  }
+
+  async function showCard(name, key) {
+    const c = G.CARD[key];
+    const el = fxBox();
+    el.className = 'show';
+    el.innerHTML = `<div class="fxcard"><div class="fxname">${esc(name)} 🃏 포춘카드</div><div class="bigcard back" id="bc">FORTUNE<br>CARD</div></div>`;
+    await sleep(700);
+    const bc = el.querySelector('#bc');
+    bc.className = `bigcard ${c.tier} flip`;
+    bc.innerHTML = `<b>${c.name}</b><small>${c.desc}</small>`;
+    await sleep(2000);
+    el.className = '';
+  }
+
+  // 말을 한 칸씩 옮기기
+  async function walk(pid, from, to, jump) {
+    if (jump) {
+      anim.pos[pid] = to;
+      render();
+      await sleep(500);
+    } else {
+      let cur = from;
+      while (cur !== to) {
+        cur = (cur + 1) % G.SPACES.length;
+        anim.pos[pid] = cur;
+        render();
+        await sleep(260);
+      }
+      await sleep(200);
+    }
+    delete anim.pos[pid];
+    render();
   }
 
   // ---------- 파산 / 방장 메뉴 ----------
@@ -963,6 +1270,7 @@
       <b>인수</b> 통행료를 낸 뒤 인수비용(건설비용 2배)을 주인에게. 관광지·랜드마크 도시는 불가.<br>
       <b>매각</b> 통행료·세금이 부족할 때만. 매각비용(건설비용 절반)을 은행에서.<br>
       <b>특수칸</b> 국세청 20만 · 무인도 보석금 20만 · 올림픽 개최 10만(한 곳에만) · 세계여행 10만 · 보너스 게임 40/80/160만.<br>
+      <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행은 다음 차례에 10만 내고 원하는 곳으로. 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
       <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 마블 1등.
       </div><button class="btn secondary wide mt" data-close>닫기</button>`);
   }
