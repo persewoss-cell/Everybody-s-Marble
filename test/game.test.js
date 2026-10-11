@@ -367,3 +367,17 @@ test('매각: 원할 때 할 수 있고, 앱으로만 하는 방은 내 차례�
   act(room, 'b', 'sell', { tileId: id('서울') });
   assert.strictEqual(money(room, 'b'), 219 * M); // 200 - 22 + 30(서울에서 출발지 통과) + 11
 });
+
+test('앱 모드: 세계여행 비용이 모자라면 주사위로 이동', () => {
+  const room = appRoom();
+  room.players[1].pos = 20;
+  act(room, 'b', 'roll', { dice: [1, 3] });
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  room.players[1].money = 5 * M;
+  assert.throws(() => act(room, 'b', 'travelTo', { to: 5 }), /부족/);
+  act(room, 'b', 'roll', { dice: [2, 3] });
+  assert.strictEqual(room.players[1].pos, 29);
+  assert.strictEqual(room.players[1].travel, false);
+});

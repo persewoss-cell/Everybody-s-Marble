@@ -580,15 +580,18 @@ const actions = {
       if (room.phase !== 'turns') throw new GameError('먼저 순서를 정해요.');
       requireTurn(room, p);
       if (t.rolled && !t.again) throw new GameError('이번 차례에는 이미 굴렸어요. "차례 끝"을 눌러 주세요.');
-      if (p.travel) throw new GameError('세계여행 중이에요. 갈 곳을 골라 주세요.');
+      if (p.travel && p.money >= TRAVEL) throw new GameError('세계여행 중이에요. 갈 곳을 골라 주세요.');
     }
+    // 세계여행 비용이 모자라면 여행을 못 하고 주사위로 이동 (여행 비용은 매각으로 마련할 수 없음)
+    const noTravel = app && p.travel;
     const [d1, d2] = a.dice;
     const sum = d1 + d2;
     const dbl = d1 === d2;
     const before = snapshot(room);
     const deltas = {};
     const from = p.pos || 0;
-    let text = `${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
+    let text = `${noTravel ? '세계여행 비용이 모자라 주사위로 이동 · ' : ''}${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
+    if (noTravel) p.travel = false;
     if (app) {
       t.rolled = true;
       t.again = false;

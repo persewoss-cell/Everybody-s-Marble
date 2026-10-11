@@ -928,7 +928,7 @@
     if (state.mode !== 'app') return true;
     if (state.phase === 'order') return state.orderRolls[m.id] === null;
     const t = state.turn;
-    return !!t && t.pid === m.id && (!t.rolled || t.again) && !m.travel;
+    return !!t && t.pid === m.id && (!t.rolled || t.again) && (!m.travel || m.money < G.TRAVEL);
   }
   function diceLabel() {
     const m = me();
@@ -970,7 +970,7 @@
     const mine = t.pid === session.playerId;
     const m = me();
     const btns = [];
-    if (mine && m.travel) btns.push(`<button class="btn small accent" id="tgo">✈️ 갈 곳 고르기 (${fmt(G.TRAVEL)})</button>`);
+    if (mine && m.travel && m.money >= G.TRAVEL) btns.push(`<button class="btn small accent" id="tgo">✈️ 갈 곳 고르기 (${fmt(G.TRAVEL)})</button>`);
     if (mine && m.jail > 0 && !t.rolled) {
       btns.push(`<button class="btn small secondary" id="tbail">보석금 ${fmt(G.BAIL)}</button>`);
       if (m.card === 'escape') btns.push('<button class="btn small secondary" id="tesc">탈출 카드</button>');
@@ -978,7 +978,7 @@
     if (mine) btns.push(`<button class="btn small" id="tend" ${t.rolled && !t.again ? '' : 'disabled'}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
     const note = mine
-      ? (m.travel ? '세계여행! 갈 곳을 고르세요' : m.jail > 0 && !t.rolled ? '무인도: 더블·보석금·탈출 카드로 나와요' : t.again ? '더블! 한 번 더 굴려요' : t.rolled ? '할 일을 마치면 차례 끝' : '주사위를 굴리세요')
+      ? (m.travel && m.money < G.TRAVEL ? `세계여행 비용(${fmt(G.TRAVEL)})이 모자라요. 주사위를 굴려 이동하세요` : m.travel ? '세계여행! 갈 곳을 고르세요' : m.jail > 0 && !t.rolled ? '무인도: 더블·보석금·탈출 카드로 나와요' : t.again ? '더블! 한 번 더 굴려요' : t.rolled ? '할 일을 마치면 차례 끝' : '주사위를 굴리세요')
       : '';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
