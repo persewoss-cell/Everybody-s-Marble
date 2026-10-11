@@ -103,20 +103,32 @@
     }
     if (!o.keepOpen) closeModal();
     p.catch((e) => handleError(e, action, o));
-    if (!NO_END_ASK.includes(action.type)) setTimeout(() => askEndTurn(0), 400);
+    if (!NO_END_ASK.includes(action.type)) scheduleEnd();
     return true;
   }
 
   // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
   const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust'];
+  // 한 번에 하나만 기다리도록 타이머 하나로 관리
+  let endTimer = null;
+  let askOnClose = false; // 도착·포춘카드 뒤 뜬 창을 닫으면 차례 끝을 물어봄
+  function scheduleEnd(title, delay) {
+    clearTimeout(endTimer);
+    endTimer = setTimeout(() => askEndTurn(0, title), delay || 400);
+  }
   function askEndTurn(tries, title) {
-    tries = tries || 0;
-    if (tries > 100 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
+    endTimer = null;
+    if (tries > 150 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
     const t = state.turn;
     const m = me();
-    if (!t || t.pid !== m.id || !t.rolled || t.again || m.travel || m.pendingCard) return;
-    if ($modal.innerHTML || anim.busy || anim.queue.length) return setTimeout(() => askEndTurn(tries + 1, title), 600);
-    openModal(`<h3>${title || '차례를 끝낼까요?'}</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
+    if (!t || t.pid !== m.id || !t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled)) return;
+    if ($modal.querySelector('#endask')) return;
+    if ($modal.innerHTML || anim.busy || anim.queue.length) {
+      endTimer = setTimeout(() => askEndTurn(tries + 1, title), 600);
+      return;
+    }
+    askOnClose = false;
+    openModal(`<h3 id="endask">${title || '차례를 끝낼까요?'}</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
       <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="yes">차례 끝</button></div>`, (root) => {
       root.querySelector('#yes').onclick = () => run({ type: 'endTurn' });
     });
@@ -984,18 +996,28 @@
   }
 
   // 도착한 칸 화면 자동으로 열기
+  let endTitle = null; // 할 일이 없는 칸에 도착했을 때 물어볼 말
   function openLanding(pos) {
     const sp = G.SPACES[pos];
     if (!sp || me().bankrupt || state.status !== 'playing') return;
     if (sp.kind !== 'special') return tileSheet(sp.id);
     const m = me();
     switch (sp.key) {
-      case 'start': return toast('출발지 도착! 내 도시를 눌러 건물을 지을 수 있어요.');
+      case 'start':
+        endTitle = myTiles().some((t) => t.kind === 'city')
+          ? '🏁 출발지 도착! 내 도시 한 곳에 건물을 지을 수 있어요 (\'아직이요\'를 누르고 도시를 누르세요). 차례를 끝낼까요?'
+          : '🏁 출발지에 도착했어요. 차례를 끝낼까요?';
+        return;
       case 'bonus': return ACTIONS.bonus();
       case 'island': return state.mode === 'app' ? toast('무인도! 3차례 동안 쉬어요.') : specialSheet(pos);
       case 'card': return fortuneDialog();
-      case 'olympic': return myTiles().some((t) => t.kind === 'city') ? ACTIONS.olympic(pos) : toast('올림픽을 열 내 도시가 없어요.');
-      case 'travel': return toast(state.mode === 'app' ? '세계여행! 다음 차례에 원하는 곳으로 가요.' : '세계여행 칸이에요.');
+      case 'olympic':
+        if (myTiles().some((t) => t.kind === 'city')) return ACTIONS.olympic(pos);
+        endTitle = '🏅 올림픽을 열 내 도시가 없어요. 차례를 끝낼까요?';
+        return;
+      case 'travel':
+        endTitle = '✈️ 세계여행! 다음 차례에 원하는 곳으로 가요. 차례를 끝낼까요?';
+        return;
       case 'tax': return autoTax();
     }
     return m;
@@ -1016,13 +1038,26 @@
       case 'swap': return swapDialog();
       case 'donate': return donateDialog();
       case 'olympicHost': return ACTIONS.olympic();
-      case 'goStart': return toast('출발지로! 월급을 받았어요. 내 도시를 눌러 건물을 지을 수 있어요.');
+      case 'goStart':
+        endTitle = myTiles().some((t) => t.kind === 'city')
+          ? '🏁 출발지로 와서 월급을 받았어요. 내 도시 한 곳에 건물을 지을 수 있어요 (\'아직이요\'를 누르고 도시를 누르세요). 차례를 끝낼까요?'
+          : '🏁 출발지로 와서 월급을 받았어요. 차례를 끝낼까요?';
+        return;
       case 'bonusGo': return ACTIONS.bonus();
       case 'taxGo': return autoTax();
-      case 'olympicTour': return state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.');
-      case 'travelInvite': return toast('세계여행 칸으로! 다음 차례에 원하는 곳으로 가요.');
-      case 'islandTrip': return toast('무인도로 이동했어요.');
-      default: return toast(`${G.CARD[key].name} 카드를 보관했어요.`);
+      case 'olympicTour':
+        if (state.olympic) return tileSheet(state.olympic.tileId);
+        endTitle = '올림픽 개최지가 없어 패스예요. 차례를 끝낼까요?';
+        return;
+      case 'travelInvite':
+        endTitle = '✈️ 세계여행 칸으로 왔어요. 다음 차례에 원하는 곳으로 가요. 차례를 끝낼까요?';
+        return;
+      case 'islandTrip':
+        endTitle = '🏝️ 무인도로 이동했어요. 차례를 끝낼까요?';
+        return;
+      default:
+        endTitle = `🃏 ${G.CARD[key].name} 카드를 보관했어요. 차례를 끝낼까요?`;
+        return;
     }
   }
 
@@ -1134,8 +1169,12 @@
     if (tx.actorId === session.playerId && autoNext && !anim.queue.length) {
       autoNext = false;
       if (tx.kind === 'fortune') handleDrawn(tx.card);
-      else if (tx.kind === 'roll' && me().jail > 0) askEndTurn(0, '🏝️ 무인도에 있어요. 할 일이 없으니 차례를 끝낼까요?');
+      else if (tx.kind === 'roll' && me().jail > 0) endTitle = '🏝️ 무인도에 있어요. 할 일이 없으니 차례를 끝낼까요?';
       else if (tx.kind === 'roll' && tx.to !== tx.from) openLanding(tx.to);
+      // 도착이나 카드 뒤에 뜬 창을 닫으면 차례 끝을 물어보고, 창이 안 떴으면 바로 물어봄
+      askOnClose = true;
+      if (!$modal.innerHTML) scheduleEnd(endTitle);
+      endTitle = null;
     }
     playNext();
   }
@@ -1299,7 +1338,10 @@
   function openModal(html, onMount) {
     $modal.innerHTML = `<div class="modal-bg"><div class="modal"><button class="x" data-close aria-label="닫기">✕</button>${html}</div></div>`;
     const root = $modal.firstElementChild.firstElementChild;
-    root.querySelectorAll('[data-close]').forEach((b) => (b.onclick = closeModal));
+    root.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => {
+      closeModal();
+      if (askOnClose) scheduleEnd();
+    }));
     root.querySelectorAll('[data-move]').forEach((b) => (b.onclick = () => {
       if (run({ type: 'move', to: Number(b.dataset.move) }, { keepOpen: true })) toast('말을 옮겼어요.');
     }));
