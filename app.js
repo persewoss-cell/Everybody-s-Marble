@@ -253,7 +253,7 @@
   }
 
   function topbar() {
-    return `<div class="topbar"><b>🎲 마블 은행</b>
+    return `<div class="topbar"><b>🎲 모두의 마블 보조앱</b>
       <span class="grow"></span>
       <span id="conn">${connHtml()}</span>
       ${session ? `<button class="code" id="share" title="참가 링크 보내기">${esc(session.code)}</button>` : ''}
@@ -294,10 +294,10 @@
 
   async function share() {
     const url = N.shareUrl(session);
-    const text = `모두의 마블 은행 방 번호: ${session.code}\n${url}`;
+    const text = `모두의 마블 보조앱 방 번호: ${session.code}\n${url}`;
     try {
       if (navigator.share) {
-        await navigator.share({ title: '모두의 마블 은행', text, url });
+        await navigator.share({ title: '모두의 마블 보조앱', text, url });
         return;
       }
     } catch { return; }
@@ -320,7 +320,7 @@
   function renderHome() {
     const params = new URLSearchParams(location.search);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
-      <div class="hero"><div class="logo">🎲💰</div><h1>모두의 마블 은행</h1><p>보드게임 돈 계산을 각자 휴대폰·태블릿으로</p></div>
+      <div class="hero"><div class="logo">🎲💰</div><h1>모두의 마블 보조앱</h1><p>보드게임 돈 계산을 각자 휴대폰·태블릿으로</p></div>
       <div class="card">
         <label class="field"><span>내 이름</span><input type="text" id="name" maxlength="12" placeholder="예: 엄마" value="${esc(lastName())}"></label>
         <div class="sub">튕겼다면 같은 이름으로 같은 방에 들어가면 그대로 이어져요.</div>

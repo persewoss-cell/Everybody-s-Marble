@@ -1,6 +1,6 @@
 {
-  "name": "모두의 마블 은행",
-  "short_name": "마블 은행",
+  "name": "모두의 마블 보조앱",
+  "short_name": "마블 보조앱",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#1d2b53",
