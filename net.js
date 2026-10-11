@@ -14,6 +14,8 @@
   ];
   const REQUEST_TIMEOUT = 10000;
   const HOST_PING_MS = 10000;
+  const LISTING_EVERY = 3; // 방 목록 정보는 30초마다 갱신
+  const LISTING_FRESH_MS = 90000; // 90초 넘게 소식이 없는 방은 목록에서 숨김
 
   function rand(n) {
     const a = new Uint8Array(n);
@@ -22,6 +24,9 @@
   }
   function topic(code, sub) {
     return `${PREFIX}/${code}/${sub}`;
+  }
+  function listingTopic(code) {
+    return `${PREFIX}/rooms/${code}`;
   }
   function brokerList(hint) {
     const custom = new URLSearchParams(location.search).get('broker');
@@ -267,11 +272,28 @@
         JSON.stringify({ rev: H.rev, epoch: H.epoch, at: Date.now(), state }),
         { qos: 1, retain: true },
       );
+      this.publishListing();
+    }
+
+    // 처음 화면의 "열려 있는 방" 목록에 보일 정보
+    publishListing() {
+      const room = this.host.room;
+      const host = room.players.find((p) => p.id === room.hostId);
+      const info = {
+        code: room.code,
+        host: host ? host.name : '',
+        players: room.players.map((p) => p.name),
+        status: room.status,
+        at: Date.now(),
+      };
+      this.client.publish(listingTopic(room.code), JSON.stringify(info), { qos: 1, retain: true });
     }
 
     ping() {
       if (this.client && this.client.connected) {
         this.client.publish(topic(this.s.code, 'ping'), String(Date.now()), { qos: 0 });
+        this.pings = (this.pings || 0) + 1;
+        if (this.pings % LISTING_EVERY === 0) this.publishListing();
       }
     }
 
@@ -293,6 +315,7 @@
     async leave() {
       if (this.host) {
         this.client.publish(topic(this.s.code, 'state'), '', { qos: 1, retain: true });
+        this.client.publish(listingTopic(this.s.code), '', { qos: 1, retain: true });
         dropHost(this.s.code);
         await new Promise((r) => setTimeout(r, 300));
       } else {
@@ -325,7 +348,7 @@
   }
 
   // ---- 방 만들기 / 참가 ----
-  async function createRoom(name) {
+  async function createRoom(name, board) {
     let lastErr;
     for (const url of brokerList()) {
       let client;
@@ -341,7 +364,7 @@
         if (existing && existing.state) continue; // 이미 쓰는 번호
         const playerId = rand(6);
         const token = rand(16);
-        const room = G.createRoom(code, name, playerId, null);
+        const room = G.createRoom(code, name, playerId, null, board);
         saveHost(code, { room, tokens: { [playerId]: token }, seen: {}, rev: 0, epoch: rand(4) });
         const session = { code, broker: url, playerId, token, cid: rand(6), host: true, name };
         return { session, client };
@@ -396,6 +419,50 @@
     throw friendlyError('방을 찾을 수 없습니다. 방 번호를 확인해 주세요.', { code: 'NO_ROOM' });
   }
 
+  // 열려 있는 방 목록 지켜보기. onList([{ code, host, players, status, at, broker }])
+  function watchRooms(onList) {
+    let stopped = false;
+    let client = null;
+    let timer = null;
+    const rooms = new Map();
+    const emit = () => {
+      if (stopped) return;
+      const now = Date.now();
+      const list = [...rooms.values()]
+        .filter((r) => now - r.at < LISTING_FRESH_MS && r.status !== 'ended')
+        .sort((a, b) => (a.status === b.status ? b.at - a.at : a.status === 'lobby' ? -1 : 1));
+      onList(list, true);
+    };
+    (async () => {
+      for (const url of brokerList()) {
+        if (stopped) return;
+        try {
+          client = await connectBroker(url, 6000);
+        } catch {
+          continue;
+        }
+        if (stopped) return client.end(true);
+        client.on('message', (t, payload) => {
+          const code = t.split('/').pop();
+          const info = payload && payload.length ? safeParse(payload) : null;
+          if (info && info.code === code) rooms.set(code, { ...info, broker: url });
+          else rooms.delete(code);
+          emit();
+        });
+        client.subscribe(`${PREFIX}/rooms/+`, { qos: 0 });
+        timer = setInterval(emit, 10000);
+        setTimeout(emit, 1500);
+        return;
+      }
+      if (!stopped) onList([], false);
+    })();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      if (client) client.end(true);
+    };
+  }
+
   function shareUrl(session) {
     const u = new URL(location.href);
     u.search = '';
@@ -412,5 +479,5 @@
     return BROKERS[Number(i)] || null;
   }
 
-  root.MarbleNet = { Connection, createRoom, joinRoom, shareUrl, brokerFromIndex, hasHostData: (code) => !!loadHost(code) };
+  root.MarbleNet = { Connection, createRoom, joinRoom, watchRooms, shareUrl, brokerFromIndex, hasHostData: (code) => !!loadHost(code) };
 })(typeof self !== 'undefined' ? self : this);

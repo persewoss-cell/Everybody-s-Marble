@@ -165,3 +165,28 @@ input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1p
 
 .rules { font-size: 14px; line-height: 1.6; }
 .rules ul { padding-left: 18px; margin: 6px 0; }
+
+.btn.small { width: auto; padding: 8px 16px; font-size: 15px; }
+.btn.big { padding: 16px; margin-bottom: 12px; font-size: 19px; }
+.btn.big small { display: block; font-size: 12px; font-weight: 500; opacity: .75; margin-top: 2px; }
+
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.tile {
+  background: var(--card); border: 1px solid var(--line); border-top: 6px solid var(--c); border-radius: 10px;
+  padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 64px;
+}
+.tile .tn { font-weight: 700; font-size: 14px; }
+.tile .tp { font-size: 11px; color: var(--muted); }
+.tile .to { font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+.tile .to .dot { width: 10px; height: 10px; }
+
+.ptable { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0 10px; }
+.ptable th { font-size: 12px; color: var(--muted); font-weight: 600; text-align: right; padding: 4px; }
+.ptable td { padding: 6px 4px; border-top: 1px solid var(--line); text-align: right; }
+.ptable td:first-child { text-align: left; }
+.ptable tr.have td { font-weight: 700; color: var(--plus); }
+.ptable.form input { padding: 8px; font-size: 16px; text-align: right; }
+.plist.editable li { cursor: pointer; }
+.check small { color: var(--muted); font-size: 11px; }
+.ta { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--card); font-family: monospace; font-size: 13px; }
+[hidden] { display: none !important; }

@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   olympicMultiplier: 2,    // 올림픽 개최 도시 통행료 배수
   takeoverMultiplier: 2,   // 인수 가격 = 현재 건설가(땅+건물)의 2배
   sellRate: 50,            // 은행에 매각할 때 돌려받는 비율(%)
+  autoWin: true,           // 트리플/라인/관광지 독점을 자동으로 판정
 };
 
 const MAX_PLAYERS = 4;
@@ -67,10 +68,11 @@ function sanitizeSettings(input, base) {
     if (n < 0 || n > 100) throw new GameError('매각 비율은 0~100% 사이여야 합니다.');
     s.sellRate = n;
   }
+  if (input.autoWin !== undefined) s.autoWin = !!input.autoWin;
   return s;
 }
 
-function createRoom(code, hostName, hostId, settings) {
+function createRoom(code, hostName, hostId, settings, board) {
   const room = {
     code,
     createdAt: Date.now(),
@@ -82,6 +84,8 @@ function createRoom(code, hostName, hostId, settings) {
     log: [],
     nextTxId: 1,
     result: null,
+    board: sanitizeBoard(board),
+    props: {}, // tileId → { owner, built: { villa, building, hotel, landmark }, olympic }
   };
   addPlayer(room, hostName, hostId);
   return room;
@@ -117,6 +121,159 @@ function requirePlaying(room) {
 
 function requireHost(room, actorId) {
   if (room.hostId !== actorId) throw new GameError('방장만 할 수 있습니다.');
+}
+
+// ---- 도시 가격표 / 땅 소유 ----
+// 도시 카드(도시증서)에 적힌 건설비와 통행료를 칸마다 입력해 두면 자동으로 계산합니다.
+// 통행료 = 지어진 것(땅·별장·빌딩·호텔·랜드마크) 통행료의 합 × 컬러 독점 배수 × 올림픽 배수
+const ITEMS = ['land', 'villa', 'building', 'hotel', 'landmark'];
+const BUILDINGS = ['villa', 'building', 'hotel', 'landmark'];
+const ITEM_NAMES = { land: '땅', villa: '별장', building: '빌딩', hotel: '호텔', landmark: '랜드마크' };
+const GROUPS = [
+  { name: '빨강', color: '#e74c3c' },
+  { name: '주황', color: '#f39c12' },
+  { name: '노랑', color: '#f1c40f' },
+  { name: '초록', color: '#27ae60' },
+  { name: '하늘', color: '#5dade2' },
+  { name: '파랑', color: '#2e5cb8' },
+  { name: '보라', color: '#8e44ad' },
+  { name: '분홍', color: '#ec7ab8' },
+];
+const LINES = 4;
+const MAX_TILES = 60;
+
+function moneyField(v) {
+  const n = Math.round(Number(v) || 0);
+  if (n < 0 || n > 1e12) throw new GameError('가격표의 금액이 올바르지 않습니다.');
+  return n;
+}
+
+function sanitizeBoard(input) {
+  const tiles = Array.isArray(input) ? input : (input && Array.isArray(input.tiles) ? input.tiles : []);
+  if (tiles.length > MAX_TILES) throw new GameError(`칸은 최대 ${MAX_TILES}개까지 넣을 수 있습니다.`);
+  const ids = new Set();
+  return tiles.map((t, i) => {
+    const kind = t.kind === 'tour' ? 'tour' : 'city';
+    let id = String(t.id || '').slice(0, 16) || 't' + i;
+    while (ids.has(id)) id += 'x';
+    ids.add(id);
+    const name = String(t.name || '').trim().slice(0, 12) || `칸 ${i + 1}`;
+    const line = Math.max(0, Math.min(LINES - 1, Math.round(Number(t.line) || 0)));
+    const cost = {};
+    const toll = {};
+    for (const k of kind === 'city' ? ITEMS : ['land']) {
+      cost[k] = moneyField(t.cost && t.cost[k]);
+      toll[k] = moneyField(t.toll && t.toll[k]);
+    }
+    const tile = { id, name, kind, line, cost, toll };
+    if (kind === 'city') tile.group = Math.max(0, Math.min(GROUPS.length - 1, Math.round(Number(t.group) || 0)));
+    return tile;
+  });
+}
+
+function getTile(room, tileId) {
+  const t = (room.board || []).find((x) => x.id === tileId);
+  if (!t) throw new GameError('칸을 찾을 수 없습니다.');
+  return t;
+}
+
+function builtList(tile, prop) {
+  if (!prop) return [];
+  if (tile.kind !== 'city') return ['land'];
+  return ['land', ...BUILDINGS.filter((k) => prop.built && prop.built[k])];
+}
+
+// 현재 건설가 (땅 + 지어진 건물 가격의 합)
+function constructionValue(tile, prop) {
+  return builtList(tile, prop).reduce((sum, k) => sum + (tile.cost[k] || 0), 0);
+}
+
+function hasMonopoly(room, ownerId, group) {
+  const cities = (room.board || []).filter((t) => t.kind === 'city' && t.group === group);
+  return cities.length > 0 && cities.every((t) => room.props[t.id] && room.props[t.id].owner === ownerId);
+}
+
+function tollInfo(room, tileId) {
+  const tile = getTile(room, tileId);
+  const prop = room.props[tileId];
+  if (!prop) return { amount: 0, base: 0, parts: [] };
+  const base = builtList(tile, prop).reduce((sum, k) => sum + (tile.toll[k] || 0), 0);
+  let mult = 1;
+  const parts = [];
+  if (tile.kind === 'city' && hasMonopoly(room, prop.owner, tile.group)) {
+    mult *= room.settings.monopolyMultiplier;
+    parts.push(`컬러 독점×${room.settings.monopolyMultiplier}`);
+  }
+  if (prop.olympic > 0) {
+    const m = Math.pow(room.settings.olympicMultiplier, prop.olympic);
+    mult *= m;
+    parts.push(`올림픽×${m}`);
+  }
+  return { amount: Math.round(base * mult), base, parts };
+}
+
+function takeoverPrice(room, tileId) {
+  const tile = getTile(room, tileId);
+  return Math.round(constructionValue(tile, room.props[tileId]) * room.settings.takeoverMultiplier);
+}
+
+function sellPrice(room, tileId) {
+  const tile = getTile(room, tileId);
+  return Math.floor((constructionValue(tile, room.props[tileId]) * room.settings.sellRate) / 100);
+}
+
+// 독점 승리 판정: 트리플 독점 / 라인 독점 / 관광지 독점
+function winCheck(room, ownerId) {
+  const board = room.board || [];
+  const mine = (t) => room.props[t.id] && room.props[t.id].owner === ownerId;
+  let colors = 0;
+  for (let g = 0; g < GROUPS.length; g++) if (hasMonopoly(room, ownerId, g)) colors++;
+  if (colors >= 3) return '트리플 독점';
+  for (let l = 0; l < LINES; l++) {
+    const line = board.filter((t) => t.line === l);
+    if (line.length >= 2 && line.every(mine)) return '라인 독점';
+  }
+  const tours = board.filter((t) => t.kind === 'tour');
+  if (tours.length >= 2 && tours.every(mine)) return '관광지 독점';
+  return null;
+}
+
+function snapshot(room, tileIds) {
+  const out = {};
+  for (const id of tileIds) out[id] = room.props[id] ? JSON.parse(JSON.stringify(room.props[id])) : null;
+  return out;
+}
+
+function pickBuildings(tile, prop, items) {
+  const list = Array.isArray(items) ? [...new Set(items)] : [];
+  if (!list.length) return [];
+  if (tile.kind !== 'city') throw new GameError('관광지에는 건물을 지을 수 없습니다.');
+  for (const k of list) {
+    if (!BUILDINGS.includes(k)) throw new GameError('알 수 없는 건물입니다.');
+    if (prop && prop.built && prop.built[k]) throw new GameError(`${ITEM_NAMES[k]}은(는) 이미 지어져 있습니다.`);
+  }
+  if (list.includes('landmark')) {
+    const ready = prop && prop.built && prop.built.villa && prop.built.building && prop.built.hotel;
+    if (!ready) throw new GameError('랜드마크는 별장·빌딩·호텔이 모두 지어진 도시에 다시 도착했을 때 지을 수 있습니다.');
+  }
+  return BUILDINGS.filter((k) => list.includes(k));
+}
+
+function ownTile(room, actorId, tileId) {
+  const tile = getTile(room, tileId);
+  const prop = room.props[tileId];
+  if (!prop || prop.owner !== actorId) throw new GameError('내 땅이 아닙니다.');
+  return { tile, prop };
+}
+
+function maybeAutoWin(room, ownerId, tx) {
+  if (!room.settings.autoWin || room.status !== 'playing') return;
+  const reason = winCheck(room, ownerId);
+  if (reason) {
+    room.status = 'ended';
+    room.result = { winnerId: ownerId, reason, at: Date.now() };
+    tx.endsGame = true;
+  }
 }
 
 // 거래 기록. deltas: { playerId: 변화량 }, bankruptIds: 이 거래로 파산한 플레이어
@@ -308,6 +465,110 @@ const actions = {
     record(room, actorId, 'sell', `${city}${p.name} 매각 +${fmt(amount)} (${fmt(value)}의 ${room.settings.sellRate}%)`, { [p.id]: amount });
   },
 
+  // ---- 도시 가격표로 자동 계산하는 동작 ----
+  updateBoard(room, actorId, a) {
+    requireHost(room, actorId);
+    room.board = sanitizeBoard(a.board);
+    const ids = new Set(room.board.map((t) => t.id));
+    for (const id of Object.keys(room.props)) if (!ids.has(id)) delete room.props[id];
+  },
+
+  // 빈 땅 구매 (+ 원하면 건물도 같이 건설)
+  buyTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const tile = getTile(room, a.tileId);
+    if (room.props[tile.id]) throw new GameError('이미 주인이 있는 땅입니다.');
+    const items = pickBuildings(tile, null, a.items);
+    const amount = tile.cost.land + items.reduce((s, k) => s + tile.cost[k], 0);
+    ensureFunds(p, amount);
+    const before = snapshot(room, [tile.id]);
+    const built = {};
+    for (const k of items) built[k] = true;
+    room.props[tile.id] = { owner: p.id, built, olympic: 0 };
+    const what = ['땅', ...items.map((k) => ITEM_NAMES[k])].join('+');
+    const tx = record(room, actorId, 'buyTile', `[${tile.name}] ${p.name} ${what} 구매 -${fmt(amount)}`, { [p.id]: -amount }, { propsBefore: before });
+    maybeAutoWin(room, p.id, tx);
+  },
+
+  // 내 땅에 건물 추가 건설
+  buildTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const { tile, prop } = ownTile(room, actorId, a.tileId);
+    const items = pickBuildings(tile, prop, a.items);
+    if (!items.length) throw new GameError('지을 건물을 골라 주세요.');
+    const amount = items.reduce((s, k) => s + tile.cost[k], 0);
+    ensureFunds(p, amount);
+    const before = snapshot(room, [tile.id]);
+    prop.built = { ...prop.built };
+    for (const k of items) prop.built[k] = true;
+    record(room, actorId, 'buildTile', `[${tile.name}] ${p.name} ${items.map((k) => ITEM_NAMES[k]).join('+')} 건설 -${fmt(amount)}`, { [p.id]: -amount }, { propsBefore: before });
+  },
+
+  // 다른 사람 땅에 도착 → 통행료 자동 계산
+  payTollTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const tile = getTile(room, a.tileId);
+    const prop = room.props[tile.id];
+    if (!prop) throw new GameError('주인이 없는 땅입니다.');
+    if (prop.owner === p.id) throw new GameError('자기 땅에는 통행료를 내지 않습니다.');
+    const owner = activePlayer(room, prop.owner);
+    const info = tollInfo(room, tile.id);
+    if (info.amount <= 0) throw new GameError('가격표에 통행료가 입력되지 않았습니다.');
+    ensureFunds(p, info.amount);
+    const detail = info.parts.length ? ` (${fmt(info.base)} ${info.parts.join(' ')})` : '';
+    record(room, actorId, 'toll', `[${tile.name}] ${p.name} → ${owner.name} 통행료 ${fmt(info.amount)}${detail}`, {
+      [p.id]: -info.amount,
+      [owner.id]: info.amount,
+    });
+  },
+
+  // 인수: 건설가 × 인수 배수를 주인에게 내고 땅과 건물을 그대로 가져옴. 랜드마크는 인수 불가.
+  takeoverTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const tile = getTile(room, a.tileId);
+    const prop = room.props[tile.id];
+    if (!prop) throw new GameError('주인이 없는 땅입니다.');
+    if (prop.owner === p.id) throw new GameError('자기 땅은 인수할 수 없습니다.');
+    if (prop.built && prop.built.landmark) throw new GameError('랜드마크가 지어진 도시는 인수할 수 없습니다.');
+    const owner = activePlayer(room, prop.owner);
+    const amount = takeoverPrice(room, tile.id);
+    ensureFunds(p, amount);
+    const before = snapshot(room, [tile.id]);
+    prop.owner = p.id;
+    const tx = record(room, actorId, 'takeover', `[${tile.name}] ${p.name}이(가) ${owner.name}의 땅 인수 ${fmt(amount)}`, {
+      [p.id]: -amount,
+      [owner.id]: amount,
+    }, { propsBefore: before });
+    maybeAutoWin(room, p.id, tx);
+  },
+
+  // 내 땅을 은행에 매각
+  sellTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const { tile } = ownTile(room, actorId, a.tileId);
+    const amount = sellPrice(room, tile.id);
+    const before = snapshot(room, [tile.id]);
+    delete room.props[tile.id];
+    record(room, actorId, 'sell', `[${tile.name}] ${p.name} 매각 +${fmt(amount)} (${room.settings.sellRate}%)`, { [p.id]: amount }, { propsBefore: before });
+  },
+
+  // 올림픽 개최: 내 도시의 통행료 배수 증가
+  olympicTile(room, actorId, a) {
+    requirePlaying(room);
+    const p = activePlayer(room, actorId);
+    const { tile, prop } = ownTile(room, actorId, a.tileId);
+    if (tile.kind !== 'city') throw new GameError('올림픽은 도시에서만 열 수 있습니다.');
+    if ((prop.olympic || 0) >= 5) throw new GameError('더 이상 올림픽을 열 수 없습니다.');
+    const before = snapshot(room, [tile.id]);
+    prop.olympic = (prop.olympic || 0) + 1;
+    record(room, actorId, 'olympic', `[${tile.name}] ${p.name} 올림픽 개최 (통행료 ×${Math.pow(room.settings.olympicMultiplier, prop.olympic)})`, {}, { propsBefore: before });
+  },
+
   // 파산: 남은 현금은 빚진 상대(또는 은행)에게 넘어가고 부족한 금액은 내지 않음.
   bankrupt(room, actorId, a) {
     requirePlaying(room);
@@ -323,9 +584,15 @@ const actions = {
     } else if (p.money > 0) {
       text += ` — 남은 ${fmt(p.money)}은(는) 은행으로`;
     }
+    // 파산한 사람의 땅과 건물은 은행으로 돌아감
+    const owned = Object.keys(room.props).filter((id) => room.props[id].owner === p.id);
+    const before = snapshot(room, owned);
+    for (const id of owned) delete room.props[id];
+    if (owned.length) text += ` · 땅 ${owned.length}곳은 은행으로`;
     p.bankrupt = true;
-    record(room, actorId, 'bankrupt', text, deltas, { bankruptIds: [p.id] });
+    const tx = record(room, actorId, 'bankrupt', text, deltas, { bankruptIds: [p.id], propsBefore: before });
     checkLastSurvivor(room);
+    if (room.status === 'ended') tx.endsGame = true;
   },
 
   // 방장 전용: 잔액 직접 수정 (실수 보정용)
@@ -343,6 +610,10 @@ const actions = {
   // 되돌리기: 본인 거래는 본인이, 모든 거래는 방장이
   undo(room, actorId, a) {
     if (room.status === 'lobby') throw new GameError('되돌릴 거래가 없습니다.');
+    if (room.status === 'ended') {
+      const t = room.log.find((x) => x.id === Number(a.txId));
+      if (!t || !t.endsGame) throw new GameError('게임이 끝났습니다. 게임을 끝낸 거래만 취소할 수 있습니다.');
+    }
     const tx = room.log.find((t) => t.id === Number(a.txId));
     if (!tx) throw new GameError('거래를 찾을 수 없습니다.');
     if (tx.undone) throw new GameError('이미 취소된 거래입니다.');
@@ -351,7 +622,11 @@ const actions = {
     const inverse = {};
     for (const [pid, d] of Object.entries(tx.deltas)) inverse[pid] = -d;
     for (const pid of tx.bankruptIds || []) getPlayer(room, pid).bankrupt = false;
-    if (tx.bankruptIds && room.status === 'ended' && room.result && room.result.reason === '나머지 플레이어 모두 파산') {
+    for (const [id, prev] of Object.entries(tx.propsBefore || {})) {
+      if (prev) room.props[id] = prev;
+      else delete room.props[id];
+    }
+    if (tx.endsGame && room.status === 'ended') {
       room.status = 'playing';
       room.result = null;
     }
@@ -376,6 +651,7 @@ const actions = {
     room.status = 'lobby';
     room.result = null;
     room.log = [];
+    room.props = {};
     for (const p of room.players) {
       p.money = 0;
       p.bankrupt = false;
@@ -388,6 +664,8 @@ function applyAction(room, actorId, action) {
     throw new GameError('알 수 없는 동작입니다.');
   }
   getPlayer(room, actorId);
+  if (!room.board) room.board = [];
+  if (!room.props) room.props = {};
   actions[action.type](room, actorId, action);
   room.updatedAt = Date.now();
 }
@@ -402,6 +680,8 @@ function publicState(room) {
     players: room.players.map(({ id, name, color, money, bankrupt }) => ({ id, name, color, money, bankrupt })),
     log: room.log.slice(-100),
     result: room.result,
+    board: room.board || [],
+    props: room.props || {},
   };
 }
 
@@ -415,7 +695,18 @@ const api = {
   applyAction,
   publicState,
   sanitizeSettings,
+  sanitizeBoard,
   fmt,
+  ITEMS,
+  BUILDINGS,
+  ITEM_NAMES,
+  GROUPS,
+  LINES,
+  tollInfo,
+  takeoverPrice,
+  sellPrice,
+  constructionValue,
+  hasMonopoly,
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
