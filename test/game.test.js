@@ -220,3 +220,11 @@ test('다른 기기에서 미리 계산해도 방장과 같은 결과', () => {
   g.applyAction(room, 'b', { type: 'toll', tileId: id('서울') });
   assert.deepStrictEqual(g.publicState(copy).players, g.publicState(room).players);
 });
+
+test('송금: 은행에도 낼 수 있음', () => {
+  const room = setup();
+  act(room, 'a', 'transfer', { to: 'bank', amount: 15 * M });
+  assert.strictEqual(money(room, 'a'), 185 * M);
+  act(room, 'a', 'undo');
+  assert.strictEqual(money(room, 'a'), 200 * M);
+});

@@ -670,9 +670,9 @@
     },
     transfer() {
       const list = others();
-      if (!list.length) return;
-      let to = list.length === 1 ? list[0].id : null;
-      amountDialog('💸 송금', playerChips(list, to), '보내기', (amount, root) => {
+      let to = null;
+      const chips = playerChips(list, null).replace('<div class="chips">', '<div class="chips"><button class="chip" data-p="bank">🏦 은행</button>');
+      amountDialog('💸 송금', chips, '보내기', (amount, root) => {
         if (!to) return (root.querySelector('#err').textContent = '받는 사람을 골라 주세요.');
         run({ type: 'transfer', to, amount });
       }, (root) => bindChoice(root, 'p', (v) => (to = v)));

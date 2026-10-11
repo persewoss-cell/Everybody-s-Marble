@@ -597,9 +597,16 @@ const actions = {
   transfer(room, actorId, a) {
     requirePlaying(room);
     const p = activePlayer(room, actorId);
+    const amount = positive(a.amount);
+    if (a.to === 'bank') {
+      // 은행에 따로 낼 일이 있을 때
+      ensureFunds(p, amount);
+      const before = snapshot(room);
+      record(room, actorId, 'transfer', `${p.name} → 은행 ${fmt(amount)}`, { [p.id]: -amount }, before);
+      return;
+    }
     const to = activePlayer(room, a.to);
     if (to.id === p.id) throw new GameError('자신에게는 보낼 수 없습니다.');
-    const amount = positive(a.amount);
     ensureFunds(p, amount);
     const before = snapshot(room);
     record(room, actorId, 'transfer', `${p.name} → ${to.name} 송금 ${fmt(amount)}`, { [p.id]: -amount, [to.id]: amount }, before);
