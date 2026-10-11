@@ -103,7 +103,23 @@
     }
     if (!o.keepOpen) closeModal();
     p.catch((e) => handleError(e, action, o));
+    if (!NO_END_ASK.includes(action.type)) setTimeout(() => askEndTurn(0), 400);
     return true;
+  }
+
+  // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
+  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust'];
+  function askEndTurn(tries) {
+    tries = tries || 0;
+    if (tries > 100 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
+    const t = state.turn;
+    const m = me();
+    if (!t || t.pid !== m.id || !t.rolled || t.again || m.travel || m.pendingCard) return;
+    if ($modal.innerHTML || anim.busy || anim.queue.length) return setTimeout(() => askEndTurn(tries + 1), 600);
+    openModal(`<h3>차례를 끝낼까요?</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
+      <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="yes">차례 끝</button></div>`, (root) => {
+      root.querySelector('#yes').onclick = () => run({ type: 'endTurn' });
+    });
   }
 
   function handleError(e, action, o) {
@@ -474,7 +490,7 @@
   function tileButton(t, attr) {
     const pr = prop(t.id);
     const owner = pr && player(pr.owner);
-    return `<button class="tile ${owner ? 'owned' : ''}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
+    return `<button class="tile ${owner ? 'owned' : ''}" data-pos="${t.pos}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <span class="lbl"><b>${esc(t.name)}</b>
         ${owner ? '' : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
         <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}</span>
@@ -493,7 +509,7 @@
     return here.length ? `<span class="pcs">${here.map((p) => `<i style="background:${pc(p)}" title="${esc(p.name)}"></i>`).join('')}</span>` : '';
   }
   function spaceButton(sp, attr) {
-    return `<button class="tile sp" ${attr || `data-sp="${sp.pos}"`}><span class="lbl"><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span>${piecesAt(sp.pos)}</span></button>`;
+    return `<button class="tile sp" data-pos="${sp.pos}" ${attr || `data-sp="${sp.pos}"`}><span class="lbl"><b>${sp.icon}</b><span class="tp">${sp.short || sp.name}</span>${piecesAt(sp.pos)}</span></button>`;
   }
 
   let view = (() => { try { return localStorage.getItem('marble-view') || 'real'; } catch { return 'real'; } })();
@@ -882,7 +898,14 @@
   }
 
   // ---------- 주사위 · 차례 ----------
-  const r6 = () => 1 + Math.floor(Math.random() * 6);
+  // 주사위: 기기의 암호학적 난수로 1~6을 똑같은 확률로 (두 개 합 36가지 경우, 더블은 6가지 = 1/6)
+  function r6() {
+    const buf = new Uint8Array(1);
+    for (;;) {
+      crypto.getRandomValues(buf);
+      if (buf[0] < 252) return 1 + (buf[0] % 6); // 252 = 6×42, 남는 값은 버려서 치우침 없앰
+    }
+  }
   let autoNext = false; // 내가 굴리거나 뽑은 뒤 도착한 칸 화면을 자동으로 열기
 
   function canRoll() {
@@ -1150,18 +1173,28 @@
   }
 
   // 말을 한 칸씩 옮기기
+  // 말 표시만 다시 그림 (화면 전체를 다시 그리지 않아 빠름)
+  function drawPieces() {
+    document.querySelectorAll('#app [data-pos]').forEach((el) => {
+      const lbl = el.querySelector('.lbl');
+      if (!lbl) return;
+      const old = lbl.querySelector('.pcs');
+      if (old) old.remove();
+      lbl.insertAdjacentHTML('beforeend', piecesAt(Number(el.dataset.pos)));
+    });
+  }
   async function walk(pid, from, to, jump) {
     if (jump) {
       anim.pos[pid] = to;
-      render();
+      drawPieces();
       await sleep(500);
     } else {
       let cur = from;
       while (cur !== to) {
         cur = (cur + 1) % G.SPACES.length;
         anim.pos[pid] = cur;
-        render();
-        await sleep(260);
+        drawPieces();
+        await sleep(240);
       }
       await sleep(200);
     }

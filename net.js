@@ -13,8 +13,9 @@
     'wss://test.mosquitto.org:8081/mqtt',
   ];
   const REQUEST_TIMEOUT = 10000;
-  const HOST_PING_MS = 10000;
-  const LISTING_EVERY = 3; // 방 목록 정보는 30초마다 갱신
+  const HOST_PING_MS = 3000;    // 방장 기기가 3초마다 "살아 있어요" 신호
+  const HOST_DEAD_MS = 15000;   // 15초 동안 신호가 없으면 '방장 연결 끊김'
+  const LISTING_EVERY = 10;     // 방 목록 정보는 30초마다 갱신
   const LISTING_FRESH_MS = 90000; // 90초 넘게 소식이 없는 방은 목록에서 숨김
 
   function rand(n) {
@@ -46,8 +47,8 @@
       const client = root.mqtt.connect(url, {
         clientId: 'mb_' + rand(6),
         clean: true,
-        keepalive: 30,
-        reconnectPeriod: 2000,
+        keepalive: 20,
+        reconnectPeriod: 1000,
         connectTimeout: timeoutMs || 8000,
       });
       const timer = setTimeout(() => {
@@ -161,13 +162,22 @@
         this.publishState();
         this.pingTimer = setInterval(() => this.ping(), HOST_PING_MS);
       }
-      this.watchTimer = setInterval(() => this.status(), 3000);
+      this.watchTimer = setInterval(() => this.status(), 2000);
+      // 화면을 다시 켜거나 인터넷이 돌아오면 바로 다시 연결
+      this.wake = () => {
+        if (this.closed || document.visibilityState === 'hidden') return;
+        if (!c.connected) c.reconnect();
+        else if (this.host) this.publishState();
+      };
+      document.addEventListener('visibilitychange', this.wake);
+      window.addEventListener('online', this.wake);
+      window.addEventListener('focus', this.wake);
       this.status();
     }
 
     status() {
       if (!this.h.onStatus) return;
-      const hostAlive = this.host ? true : Date.now() - this.lastHostAt < HOST_PING_MS * 3;
+      const hostAlive = this.host ? true : Date.now() - this.lastHostAt < HOST_DEAD_MS;
       this.h.onStatus({ connected: this.connected, hostAlive });
     }
 
@@ -181,7 +191,8 @@
         }
         const msg = safeParse(payload);
         if (!msg || !msg.state) return;
-        this.lastHostAt = Math.max(this.lastHostAt, Date.now());
+        // 저장돼 있던(retained) 옛 상태는 방장이 살아 있다는 뜻이 아님
+        if (msg.at) this.lastHostAt = Math.max(this.lastHostAt, Math.min(Date.now(), msg.at + 2000));
         if (this.host) return; // 방장은 자기 상태를 직접 씀
         if (msg.rev < this.rev && msg.epoch === this.epoch) return;
         this.rev = msg.rev;
@@ -334,6 +345,11 @@
       this.closed = true;
       clearInterval(this.pingTimer);
       clearInterval(this.watchTimer);
+      if (this.wake) {
+        document.removeEventListener('visibilitychange', this.wake);
+        window.removeEventListener('online', this.wake);
+        window.removeEventListener('focus', this.wake);
+      }
       for (const p of this.pending.values()) clearTimeout(p.timer);
       this.pending.clear();
       if (this.client) this.client.end(true);
