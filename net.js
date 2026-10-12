@@ -243,7 +243,7 @@
           res = { ok: true, playerId: id, token: H.tokens[id], rejoin: !!old };
         } else {
           const pid = Object.keys(H.tokens).find((k) => H.tokens[k] === req.token);
-          if (!pid || !room.players.some((p) => p.id === pid)) {
+          if (!pid || (pid !== room.hostId && !room.players.some((p) => p.id === pid))) {
             throw new G.GameError('이 방의 참가자가 아닙니다.', { code: 'NO_AUTH' });
           }
           if (req.kind === 'action') {
@@ -295,7 +295,8 @@
       const host = room.players.find((p) => p.id === room.hostId);
       const info = {
         code: room.code,
-        host: host ? host.name : '',
+        host: host ? host.name : room.hostName || '',
+        title: room.title || '',
         players: room.players.map((p) => p.name),
         status: room.status,
         mode: room.mode,
@@ -368,7 +369,9 @@
   }
 
   // ---- 방 만들기 / 참가 ----
-  async function createRoom(name, mode) {
+  // opts: { play: false, title: '1조' } — 방장이 참여하지 않고 관리만
+  // 이미 쓴 번호(taken)는 피함 (선생님이 여러 방을 한꺼번에 만들 때)
+  async function createRoom(name, mode, opts, taken) {
     let lastErr;
     for (const url of brokerList()) {
       let client;
@@ -380,11 +383,12 @@
       }
       for (let i = 0; i < 5; i++) {
         const code = String(1000 + Math.floor(Math.random() * 9000));
+        if (taken && taken.includes(code)) continue;
         const existing = await peekRoom(client, code, 1200);
         if (existing && existing.state) continue; // 이미 쓰는 번호
         const playerId = rand(6);
         const token = rand(16);
-        const room = G.createRoom(code, name, playerId, mode);
+        const room = G.createRoom(code, name, playerId, mode, opts);
         saveHost(code, { room, tokens: { [playerId]: token }, seen: {}, rev: 0, epoch: rand(4) });
         const session = { code, broker: url, playerId, token, cid: rand(6), host: true, name };
         return { session, client };

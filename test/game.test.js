@@ -381,3 +381,23 @@ test('앱 모드: 세계여행 비용이 모자라면 주사위로 이동', () =
   assert.strictEqual(room.players[1].pos, 29);
   assert.strictEqual(room.players[1].travel, false);
 });
+
+test('선생님 관리 방: 방장은 참여하지 않고 시작·되돌리기·잔액 수정만', () => {
+  const room = g.createRoom('1', '선생님', 't', 'mixed', { play: false, title: '1조' });
+  assert.strictEqual(room.players.length, 0);
+  g.addPlayer(room, '민수', 'a');
+  g.addPlayer(room, '지영', 'b');
+  act(room, 'b', 'pickColor', { color: g.PIECES[1].color }); // 방장을 기다리지 않음
+  act(room, 'a', 'pickColor', { color: g.PIECES[0].color });
+  assert.throws(() => act(room, 'a', 'start'), /방장만/);
+  act(room, 't', 'start');
+  act(room, 'a', 'salary');
+  assert.throws(() => act(room, 't', 'salary'), /플레이어/);
+  act(room, 't', 'adjust', { playerId: 'b', money: 150 * M });
+  act(room, 't', 'undo');
+  assert.strictEqual(money(room, 'b'), 200 * M);
+  act(room, 't', 'undo'); // 민수 월급도 선생님이 되돌릴 수 있음
+  assert.strictEqual(money(room, 'a'), 200 * M);
+  act(room, 't', 'end', { reason: 'time' });
+  assert.strictEqual(room.status, 'ended');
+});

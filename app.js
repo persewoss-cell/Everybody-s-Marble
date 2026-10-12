@@ -121,7 +121,7 @@
     if (tries > 150 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
     const t = state.turn;
     const m = me();
-    if (!t || t.pid !== m.id || !t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled)) return;
+    if (!m || !t || t.pid !== m.id || !t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled)) return;
     if ($modal.querySelector('#endask')) return;
     if ($modal.innerHTML || anim.busy || anim.queue.length) {
       endTimer = setTimeout(() => askEndTurn(tries + 1, title), 600);
@@ -238,6 +238,9 @@
 
   // ---------- 화면 공통 ----------
   function render() {
+    if (teacher && !T.focus) return renderTeacher();
+    if (teacher && !state) return renderTeacher();
+    if (teacher && state.status === 'lobby') return renderTeacherLobby();
     if (!session) return renderHome();
     if (!state) {
       $app.innerHTML = `${topbar()}<div class="wrap narrow"><div class="card center">연결 중...</div>
@@ -253,7 +256,7 @@
   }
 
   function topbar() {
-    return `<div class="topbar"><b>🎲 모두의 마블 보조앱</b>
+    return `<div class="topbar">${teacher && T.focus ? '<button class="code" id="tback">← 전체</button>' : ''}<b>🎲 모두의 마블 보조앱</b>
       <span class="grow"></span>
       <span id="conn">${connHtml()}</span>
       ${session ? `<button class="code" id="share" title="참가 링크 보내기">${esc(session.code)}</button>` : ''}
@@ -271,6 +274,8 @@
     if (el) el.innerHTML = connHtml();
   }
   function bindTop() {
+    const tb = document.getElementById('tback');
+    if (tb) tb.onclick = teacherBack;
     const s = document.getElementById('share');
     if (s) s.onclick = share;
     document.getElementById('fs').onclick = toggleFullscreen;
@@ -337,9 +342,29 @@
         <button class="btn accent" id="create">방 만들기</button>
       </div>
       <div class="err center" id="err"></div>
+      <div class="card mt"><h2>👩‍🏫 선생님 관리 모드 <small class="muted">게임에 참여하지 않고 조별 방을 만들어 관리</small></h2>
+        <div class="sub">방 개수</div>
+        <div class="chips">${[2, 3, 4, 5, 6].map((n) => `<button class="chip ${n === 4 ? 'on' : ''}" data-tn="${n}">${n}개</button>`).join('')}</div>
+        <div class="chips"><button class="chip on" data-tm="mixed">🎲 앱 + 실물</button><button class="chip" data-tm="app">📱 앱으로만</button></div>
+        <button class="btn" id="tcreate">조별 방 만들기</button>
+      </div>
       <button class="btn secondary mt" id="rules">규칙 요약</button>
     </div>`;
     bindTop();
+    let tn = 4;
+    let tm = 'mixed';
+    bindChoice($app, 'tn', (v) => (tn = Number(v)));
+    bindChoice($app, 'tm', (v) => (tm = v));
+    $app.querySelector('#tcreate').onclick = async () => {
+      $app.querySelectorAll('.wrap button').forEach((b) => (b.disabled = true));
+      $app.querySelector('#err').textContent = `방 ${tn}개를 만드는 중...`;
+      try {
+        await teacherCreate(tn, tm);
+      } catch (e) {
+        $app.querySelectorAll('.wrap button').forEach((b) => (b.disabled = false));
+        $app.querySelector('#err').textContent = e.message;
+      }
+    };
     const $name = $app.querySelector('#name');
     const $err = $app.querySelector('#err');
     const busy = (on, msg) => {
@@ -406,7 +431,7 @@
     if (roomList === 'error') { el.innerHTML = '<div class="muted">방 목록을 불러올 수 없어요. 방 번호로 들어가 주세요.</div>'; return; }
     if (!roomList.length) { el.innerHTML = '<div class="muted">지금 열려 있는 방이 없어요.</div>'; return; }
     el.innerHTML = `<ul class="plist">${roomList.map((r) => `<li>
-      <span class="name">${esc(r.host)}의 방 <span class="tag">${esc(r.code)}</span>
+      <span class="name">${r.title ? `<b>${esc(r.title)}</b> · ${esc(r.host)}` : `${esc(r.host)}의 방`} <span class="tag">${esc(r.code)}</span>
         <span class="muted">${MODE_NAME[r.mode] || MODE_NAME.mixed} · ${r.players.map(esc).join(', ')} · ${r.players.length}/4${r.status === 'playing' ? ' · 게임 중' : ''}</span></span>
       ${r.status === 'playing'
         ? `<button class="btn small secondary" data-join="${esc(r.code)}" data-broker="${esc(r.broker)}">이어하기</button>`
@@ -415,12 +440,223 @@
     el.querySelectorAll('[data-join]').forEach((b) => (b.onclick = () => joinFromHome(b.dataset.join, b.dataset.broker)));
   }
 
+  // ---------- 선생님 관리 모드 ----------
+  // 이 컴퓨터가 방 여러 개의 은행(방장) 역할을 함. 선생님은 게임에 참여하지 않음
+  let teacher = (() => { try { return JSON.parse(localStorage.getItem('marble-teacher')) || null; } catch { return null; } })();
+  const T = { rooms: {}, focus: null };
+  function saveTeacher() {
+    try {
+      if (teacher) localStorage.setItem('marble-teacher', JSON.stringify(teacher));
+      else localStorage.removeItem('marble-teacher');
+    } catch {}
+  }
+  let renderQueued = false;
+  function renderSoon() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => { renderQueued = false; render(); });
+  }
+
+  async function teacherCreate(count, mode) {
+    const made = [];
+    const taken = [];
+    for (let i = 1; i <= count; i++) {
+      const r = await N.createRoom('선생님', mode, { play: false, title: `${i}조` }, taken);
+      taken.push(r.session.code);
+      made.push(r);
+    }
+    teacher = { rooms: made.map((r) => r.session) };
+    saveTeacher();
+    stopRoomWatch();
+    for (const r of made) teacherConnect(r.session, r.client);
+    history.replaceState(null, '', location.pathname + location.search.replace(/[?&]room=\d+/, ''));
+    render();
+  }
+
+  function teacherConnect(sess, client) {
+    const entry = (T.rooms[sess.code] = { session: sess, state: null, connected: false, conn: null });
+    const c = new N.Connection(sess, {
+      onState: (st) => {
+        entry.state = st;
+        if (T.focus === sess.code) state = serverState = st;
+        renderSoon();
+      },
+      onStatus: (st) => { entry.connected = st.connected; },
+      onClosed: () => {},
+    });
+    entry.conn = c;
+    c.open(client).catch((e) => {
+      if (e.data && e.data.code === 'NO_ROOM') {
+        delete T.rooms[sess.code];
+        teacher.rooms = teacher.rooms.filter((x) => x.code !== sess.code);
+        saveTeacher();
+        renderSoon();
+      }
+    });
+  }
+
+  // 방 하나 자세히 보기: 그 방을 지금 화면의 방으로 삼음
+  function teacherOpen(code) {
+    const e = T.rooms[code];
+    if (!e || !e.state) return;
+    T.focus = code;
+    session = e.session;
+    conn = e.conn;
+    state = serverState = e.state;
+    connected = true;
+    hostAlive = true;
+    anim.queue = [];
+    anim.seen = state.log.length ? state.log[state.log.length - 1].id : 0;
+    closeModal();
+    render();
+  }
+  function teacherBack() {
+    T.focus = null;
+    session = null;
+    conn = null;
+    state = serverState = null;
+    closeModal();
+    render();
+  }
+
+  function teacherRoomCard(e) {
+    const st = e.state;
+    const title = (st && st.title) || e.session.code;
+    if (!st) return `<div class="card troom"><div class="thead"><b>${esc(title)}</b><span class="tag">${esc(e.session.code)}</span></div><div class="muted">연결 중...</div></div>`;
+    const ready = st.players.length >= 2 && st.players.every((p) => p.color);
+    const status = st.status === 'lobby' ? `대기 ${st.players.length}/4` : st.status === 'playing' ? '게임 중' : '끝남';
+    const winner = st.result && st.players.find((p) => p.id === st.result.winnerId);
+    return `<div class="card troom">
+      <div class="thead"><b>${esc(title)}</b><span class="bigno">${esc(st.code)}</span>
+        <span class="tag ${st.status === 'playing' ? 'now' : ''}">${status}</span><span class="grow"></span>
+        <span class="muted">${MODE_NAME[st.mode] || ''}</span></div>
+      ${st.players.length ? `<ul class="plist">${st.players.map((p) => {
+        const turn = st.turn && st.turn.pid === p.id && st.status === 'playing';
+        return `<li class="${turn ? 'now' : ''}"><span class="dot" style="background:${pc(p)}"></span>
+          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${turn ? '<span class="tag now">차례</span>' : ''}${!p.color && st.status === 'lobby' ? '<span class="tag">색 고르는 중</span>' : ''}</span>
+          <span class="money">${st.status === 'lobby' ? '' : p.bankrupt ? '파산' : fmt(p.money)}</span></li>`;
+      }).join('')}</ul>` : '<div class="muted">아직 아무도 안 들어왔어요.</div>'}
+      ${winner ? `<div class="sub">🏆 ${esc(winner.name)} 승리 · ${esc(st.result.reason)}</div>` : ''}
+      <div class="row mt">${st.status === 'lobby' ? `<button class="btn small accent" data-tstart="${st.code}" ${ready ? '' : 'disabled'}>게임 시작</button>` : ''}
+        <button class="btn small secondary" data-topen="${st.code}">열기</button></div>
+    </div>`;
+  }
+
+  function renderTeacher() {
+    const list = (teacher ? teacher.rooms : []).map((x) => T.rooms[x.code]).filter(Boolean);
+    const lobbies = list.filter((e) => e.state && e.state.status === 'lobby');
+    $app.innerHTML = `${topbar()}<div class="wrap">
+      <div class="card"><h2>👩‍🏫 선생님 관리 화면</h2>
+        <div class="sub">학생들은 처음 화면의 <b>열려 있는 방</b>에서 자기 조를 누르거나 방 번호로 들어와요. 이 컴퓨터가 모든 방의 은행이라 <b>게임하는 동안 이 화면을 켜 두세요</b> (다른 창을 띄워도 되지만 이 탭은 닫거나 최소화하지 마세요).</div>
+        <div class="row mt"><button class="btn accent" id="tall" ${lobbies.length ? '' : 'disabled'}>▶ 대기 중인 방 모두 시작</button>
+          <button class="btn secondary" id="tadd">＋ 방 하나 더</button><button class="btn danger" id="tclose">모든 방 닫기</button></div>
+      </div>
+      <div class="troom-grid">${list.map(teacherRoomCard).join('')}</div>
+    </div>`;
+    bindTop();
+    $app.querySelectorAll('[data-topen]').forEach((b) => (b.onclick = () => teacherOpen(b.dataset.topen)));
+    $app.querySelectorAll('[data-tstart]').forEach((b) => (b.onclick = () => teacherStart([T.rooms[b.dataset.tstart]])));
+    $app.querySelector('#tall').onclick = () => teacherStart(lobbies);
+    $app.querySelector('#tadd').onclick = async () => {
+      const n = (teacher.rooms.length || 0) + 1;
+      const mode = (list[0] && list[0].state && list[0].state.mode) || 'mixed';
+      try {
+        const r = await N.createRoom('선생님', mode, { play: false, title: `${n}조` }, teacher.rooms.map((x) => x.code));
+        teacher.rooms.push(r.session);
+        saveTeacher();
+        teacherConnect(r.session, r.client);
+        render();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    $app.querySelector('#tclose').onclick = () => confirmBox('모든 방을 닫을까요? 학생들도 방에서 나가게 돼요.', async () => {
+      for (const e of Object.values(T.rooms)) if (e.conn) await e.conn.leave();
+      T.rooms = {};
+      teacher = null;
+      saveTeacher();
+      teacherBack();
+    });
+  }
+
+  function teacherStart(entries) {
+    const notReady = [];
+    for (const e of entries) {
+      const st = e && e.state;
+      if (!st || st.status !== 'lobby') continue;
+      if (st.players.length < 2 || !st.players.every((p) => p.color)) {
+        notReady.push(st.title || st.code);
+        continue;
+      }
+      e.conn.act({ type: 'start' }).catch((err) => toast(`${st.title}: ${err.message}`, 'err'));
+    }
+    if (notReady.length) toast(`${notReady.join(', ')}: 2명 이상이 들어와 말 색을 골라야 시작할 수 있어요.`, 'err');
+  }
+
+  // 선생님이 연 방 — 대기실
+  function renderTeacherLobby() {
+    const ready = state.players.length >= 2 && state.players.every((p) => p.color);
+    $app.innerHTML = `${topbar()}<div class="wrap narrow">
+      <div class="card center"><div class="muted">${esc(state.title || '')} 방 번호</div><div class="bigcode">${esc(state.code)}</div>
+        <div class="sub">${MODE_NAME[state.mode]}</div></div>
+      <div class="card"><h2>참가자 ${state.players.length}/4</h2>
+        <ul class="plist">${state.players.map((p) => `<li><span class="dot" style="background:${pc(p)}"></span>
+          <span class="name">${esc(p.name)}${p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
+          <button class="link" data-kick="${p.id}">내보내기</button></li>`).join('') || '<li class="muted">아직 아무도 안 들어왔어요.</li>'}</ul></div>
+      <button class="btn accent" id="start" ${ready ? '' : 'disabled'}>게임 시작</button>
+      <button class="btn secondary mt" id="back2">← 전체 보기</button>
+    </div>`;
+    bindTop();
+    $app.querySelectorAll('[data-kick]').forEach((b) => {
+      b.onclick = () => confirmBox(`${player(b.dataset.kick).name}님을 내보낼까요?`, { type: 'kick', playerId: b.dataset.kick });
+    });
+    $app.querySelector('#start').onclick = () => run({ type: 'start' });
+    $app.querySelector('#back2').onclick = teacherBack;
+  }
+
+  // 선생님이 연 방 — 게임 중 (보기 + 관리)
+  function renderTeacherGame() {
+    const undoTx = G.lastUndoable(state);
+    const t = state.turn;
+    $app.innerHTML = `${topbar()}<div class="game ${view}">
+      <section class="g-board"><div class="board ${view === 'real' ? '' : 'card'}">${boardHtml()}</div></section>
+      <section class="g-side">
+        <div class="card"><h2>${esc(state.title || '')} <span class="tag">${esc(state.code)}</span> <span class="muted">${MODE_NAME[state.mode]}</span></h2>
+          ${state.mode === 'app' && state.phase === 'order' ? '<div class="sub">🎲 학생들이 순서를 정하는 중</div>' : ''}
+          ${t && state.phase === 'turns' ? `<div class="sub">지금 <b>${esc(player(t.pid).name)}</b> 차례</div>` : ''}
+          <div class="row mt">${t && state.phase === 'turns' ? '<button class="btn small secondary" id="tskip">차례 넘기기</button>' : ''}
+            <button class="btn small secondary" id="hostmenu">관리 메뉴</button>
+            <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
+        </div>
+      </section>
+      <section class="g-players"><div class="card"><ul class="plist">${state.players.map((p) => {
+        const turn = t && t.pid === p.id;
+        return `<li class="${turn ? 'now' : ''}"><span class="dot" style="background:${pc(p)}"></span>
+          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${turn ? '<span class="tag now">차례</span>' : ''}</span>
+          <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
+          <span class="money">${fmt(p.money)}</span></li>`;
+      }).join('')}</ul></div></section>
+      <section class="g-log card">
+        <div class="loghead"><h2>기록</h2><button class="btn small undo" id="undo" ${undoTx ? '' : 'disabled'}>↩ 되돌리기</button></div>
+        <div class="logscroll">${logHtml()}</div>
+      </section>
+    </div>`;
+    bindTop();
+    const q = (x) => $app.querySelector(x);
+    q('#undo').onclick = undoDialog;
+    q('#hostmenu').onclick = hostMenu;
+    q('#view').onclick = () => {
+      view = view === 'real' ? 'card' : 'real';
+      try { localStorage.setItem('marble-view', view); } catch {}
+      render();
+    };
+    if (q('#tskip')) q('#tskip').onclick = () => confirmBox(`${player(t.pid).name}님 차례를 넘길까요?`, { type: 'endTurn' }, '넘기기');
+  }
+
   // ---------- 대기실 ----------
   function renderLobby() {
     const host = isHost();
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="card center">
-        <div class="muted">방 번호</div>
+        <div class="muted">${state.title ? `<b>${esc(state.title)}</b> · ` : ''}방 번호</div>
         <div class="bigcode">${esc(state.code)}</div>
         <div class="sub">${MODE_NAME[state.mode]} — ${MODE_HELP[state.mode]}</div>
         <button class="btn secondary small" id="share2">📤 참가 링크 보내기</button>
@@ -437,7 +673,7 @@
       ${host
         ? `<button class="btn accent" id="start" ${state.players.length < 2 || state.players.some((p) => !p.color) ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
            <div class="sub mt">📱 방장 기기가 은행 역할을 해요. 게임하는 동안 방장 기기는 이 화면을 켜 두세요.</div>`
-        : '<div class="card center muted">방장이 게임을 시작하기를 기다리는 중...</div>'}
+        : `<div class="card center muted">${state.hostPlays === false ? `${esc(state.hostName || '선생님')}이` : '방장이'} 게임을 시작하기를 기다리는 중...</div>`}
       <div class="row mt"><button class="btn secondary" id="rules">규칙 요약</button><button class="btn secondary" id="leave">나가기</button></div>
     </div>`;
     bindTop();
@@ -455,8 +691,8 @@
   }
 
   function colorPicker() {
-    const hostColor = player(state.hostId).color;
-    const waitHost = !isHost() && !hostColor;
+    const hostP = state.players.find((p) => p.id === state.hostId);
+    const waitHost = !!hostP && !isHost() && !hostP.color;
     return `<div class="card"><h2>말 색 고르기 <small class="muted">${waitHost ? '방장이 먼저 골라요' : '실제로 쓸 말과 같은 색을 고르세요'}</small></h2>
       <div class="pieces">${G.PIECES.map((c) => {
         const owner = state.players.find((p) => p.color === c.color);
@@ -555,6 +791,7 @@
   }
 
   function renderGame() {
+    if (teacher) return renderTeacherGame();
     const m = me();
     const host = isHost();
     const undoTx = G.lastUndoable(state);
@@ -1342,12 +1579,13 @@
       }).join('')}
       ${canUndo ? '<div class="center mt"><button class="btn small secondary" id="undo">↩ 잘못 끝났으면 되돌리기</button></div>' : ''}
       ${isHost() ? '<button class="btn accent mt" id="again">같은 사람들과 다시 하기</button>' : ''}
-      <button class="btn secondary mt" id="home">처음으로</button>
+      <button class="btn secondary mt" id="home">${teacher ? '← 전체 보기' : '처음으로'}</button>
     </div>`;
     bindTop();
     if ($app.querySelector('#undo')) $app.querySelector('#undo').onclick = undoDialog;
     if (isHost()) $app.querySelector('#again').onclick = () => confirmBox('새 게임을 준비할까요? (기록이 지워져요)', { type: 'reset' });
     $app.querySelector('#home').onclick = () => {
+      if (teacher) return teacherBack();
       if (isHost()) confirmBox('방을 닫을까요?', async () => { if (conn) await conn.leave(); goHome(); });
       else goHome();
     };
@@ -1449,5 +1687,11 @@
     const roomParam = new URLSearchParams(location.search).get('room');
     if (roomParam && roomParam !== session.code) saveSession(null);
   }
-  if (session) connect(); else render();
+  if (teacher && teacher.rooms && teacher.rooms.length && !session) {
+    for (const sess of teacher.rooms) teacherConnect(sess);
+    render();
+  } else {
+    if (teacher) { teacher = null; saveTeacher(); }
+    if (session) connect(); else render();
+  }
 })();

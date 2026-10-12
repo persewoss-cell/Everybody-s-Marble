@@ -150,9 +150,15 @@ function cleanName(name) {
 
 // ---- 방 ----
 // mode: 'app' = 앱으로만 (주사위·차례·포춘카드를 앱이 관리), 'mixed' = 앱 + 실물 (돈 계산 위주, 자유롭게)
-function createRoom(code, hostName, hostId, mode) {
+// opts.play === false: 방장은 게임에 참여하지 않고 은행·관리만 (선생님 관리 화면)
+// opts.title: 방 이름 (예: '1조')
+function createRoom(code, hostName, hostId, mode, opts) {
+  const o = opts || {};
   const room = {
     code,
+    title: String(o.title || '').slice(0, 12),
+    hostPlays: o.play !== false,
+    hostName: cleanName(hostName),
     mode: mode === 'app' ? 'app' : 'mixed',
     phase: null,      // app: 'order'(순서 정하기) → 'turns'
     orderRolls: {},   // 이번에 순서 정하기 주사위를 굴려야 하는 사람 → 합 (아직이면 null)
@@ -172,7 +178,7 @@ function createRoom(code, hostName, hostId, mode) {
     nextTxId: 1,
     result: null,
   };
-  addPlayer(room, hostName, hostId);
+  if (room.hostPlays) addPlayer(room, hostName, hostId);
   return room;
 }
 
@@ -527,8 +533,8 @@ const actions = {
   pickColor(room, actorId, a) {
     if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 색을 고를 수 있습니다.');
     if (!PIECES.some((c) => c.color === a.color)) throw new GameError('알 수 없는 색입니다.');
-    const host = getPlayer(room, room.hostId);
-    if (actorId !== room.hostId && !host.color) throw new GameError('방장이 먼저 색을 골라요.');
+    const host = room.players.find((p) => p.id === room.hostId);
+    if (host && actorId !== room.hostId && !host.color) throw new GameError('방장이 먼저 색을 골라요.');
     const other = room.players.find((p) => p.color === a.color && p.id !== actorId);
     if (other) throw new GameError(`${other.name}님이 이미 고른 색이에요.`);
     getPlayer(room, actorId).color = a.color;
@@ -1130,6 +1136,7 @@ const actions = {
 
 function pname(room, id) {
   const p = room.players.find((x) => x.id === id);
+  if (!p && id === room.hostId) return room.hostName || '방장';
   return p ? p.name : '?';
 }
 
@@ -1170,15 +1177,21 @@ function whereAt(a) {
   return null;
 }
 
+const MANAGER_ACTIONS = ['start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn'];
+
 function applyAction(room, actorId, action) {
   if (!action || typeof action.type !== 'string' || !Object.prototype.hasOwnProperty.call(actions, action.type)) {
     throw new GameError('알 수 없는 동작입니다.');
   }
-  const me = getPlayer(room, actorId);
+  const me = room.players.find((p) => p.id === actorId);
+  if (!me) {
+    // 게임에 참여하지 않는 방장(선생님)은 관리 동작만
+    if (actorId !== room.hostId || !MANAGER_ACTIONS.includes(action.type)) throw new GameError('플레이어를 찾을 수 없습니다.');
+  }
   actions[action.type](room, actorId, action);
   // 칸에서 한 거래면 내 말을 그 칸으로 옮김
   const at = whereAt(action);
-  if (at !== null && room.status !== 'lobby') me.pos = at;
+  if (me && at !== null && room.status !== 'lobby') me.pos = at;
   room.updatedAt = Date.now();
 }
 
@@ -1186,6 +1199,9 @@ function applyAction(room, actorId, action) {
 function publicState(room) {
   return {
     code: room.code,
+    title: room.title || '',
+    hostPlays: room.hostPlays !== false,
+    hostName: room.hostName || '',
     status: room.status,
     hostId: room.hostId,
     mode: room.mode || 'mixed',
