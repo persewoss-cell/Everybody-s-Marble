@@ -366,7 +366,7 @@
         <button class="btn" id="tcreate">조별 방 만들기</button>
       </div>
       <div class="row mt"><button class="btn secondary" id="rules">규칙 요약</button>
-        <a class="btn secondary" href="rulebook.pdf" download="모두의마블_메가디럭스_규칙서.pdf" target="_blank">📖 룰북 PDF</a></div>
+        <a class="btn secondary" href="rulebook.pdf" download="모두의마블_보조앱_룰북.pdf" target="_blank">📖 룰북 PDF</a></div>
       <div class="maker">만든이: 강형권 선생님</div>
     </div>`;
     bindTop();
@@ -1878,7 +1878,7 @@
       <b>특수칸</b> 국세청 20만 · 무인도 보석금 20만 · 올림픽 개최 10만(한 곳에만) · 세계여행 10만 · 보너스 게임 40/80/160만.<br>
       <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행 칸에 서면 다음 차례에 주사위 대신 10만 내고 원하는 도시로 가서 사거나 짓기 (안 가고 주사위를 굴려도 됨, 더블로 도착했으면 지금 가거나 한 번 더). 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
       <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 총자산(마블 + 땅·건물·랜드마크 건설비용) 1등.
-      </div><div class="row mt"><a class="btn secondary" href="rulebook.pdf" download="모두의마블_메가디럭스_규칙서.pdf" target="_blank">📖 룰북 PDF 받기</a>
+      </div><div class="row mt"><a class="btn secondary" href="rulebook.pdf" download="모두의마블_보조앱_룰북.pdf" target="_blank">📖 룰북 PDF 받기</a>
       <button class="btn secondary" data-close>닫기</button></div>`);
   }
 
