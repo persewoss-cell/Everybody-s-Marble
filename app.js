@@ -361,7 +361,8 @@
         <div class="chips"><button class="chip on" data-tm="mixed">🎲 앱 + 실물</button><button class="chip" data-tm="app">📱 앱으로만</button></div>
         <button class="btn" id="tcreate">조별 방 만들기</button>
       </div>
-      <button class="btn secondary mt" id="rules">규칙 요약</button>
+      <div class="row mt"><button class="btn secondary" id="rules">규칙 요약</button>
+        <a class="btn secondary" href="rulebook.pdf" download="모두의마블_메가디럭스_규칙서.pdf" target="_blank">📖 룰북 PDF</a></div>
       <div class="maker">만든이: 강형권 선생님</div>
     </div>`;
     bindTop();
@@ -974,11 +975,12 @@
     if (pr.owner === m.id) {
       const toll = G.tollInfo(state, t.id);
       const fx = state.effects[t.id];
-      const canBuild = here || (!!tt && m.use === 'goStart');
+      const fromStart = !here && startBuild();
+      const canBuild = here || fromStart;
       const checks = t.kind === 'city' && canBuild ? buildChecks(t, pr) : '';
       const canArrive = (t.tour === 'beach' || fx) && here && !did(tt, 'arrive');
       openModal(`${head}
-        ${checks ? `<div class="buildbox"><div class="sub">건물 짓기 (${here ? '도착했을 때' : '출발지로 GO 카드'})</div>${checks}</div>` : ''}
+        ${checks ? `<div class="buildbox"><div class="sub">건물 짓기 (${here ? '도착했을 때' : '출발지 도착 — 한 곳만'})</div>${checks}</div>` : ''}
         ${priceTable(t)}
         <div class="preview"><span>지금 통행료</span><b>${fmt(toll.amount)}</b></div>
         ${toll.parts.length ? `<div class="sub">${toll.parts.join(' · ')}</div>` : ''}
@@ -1065,7 +1067,7 @@
     island: '3차례 동안 쉬어요. 더블, 보석금 20만, 무인도 탈출 카드로 나올 수 있어요.',
     card: '도착하면 포춘카드를 랜덤으로 뽑아요.',
     olympic: '도착하면 10만을 내고 내 도시 한 곳에 올림픽을 열 수 있어요.',
-    travel: '도착하면 다음 차례에 10만을 내고 원하는 곳으로 가요. 출발지를 지나면 월급도 받아요.',
+    travel: '도착하면 다음 차례에 주사위 대신 10만을 내고 원하는 도시·관광지나 출발지로 가요. 출발지를 지나면 월급도 받아요.',
     tax: '도착하면 세금 20만을 내요. 모자라면 도시를 매각해서 내요.',
   };
   function specialSheet(pos) {
@@ -1238,10 +1240,15 @@
 
   // 뽑은 뒤 써야 하는 카드 다시 열기
   function useCard(key) {
-    if (key === 'goStart') {
-      return pickTile('🏁 출발지로 GO — 건물을 지을 내 도시', '', (t) => t.kind === 'city' && mineF(t), (id) => tileSheet(id));
-    }
     handleDrawn(key);
+  }
+  // 앱으로만 하는 방: 출발지에 도착하면 이번 차례에 내 도시 한 곳에 건물을 지을 수 있음
+  function startBuild() {
+    const t = myTurn();
+    return !!t && landed(t, G.POS.start) && !did(t, 'startBuild') && myTiles().some((x) => x.kind === 'city');
+  }
+  function startPick() {
+    pickTile('🏁 출발지 도착 — 건물을 지을 내 도시', '한 곳만 지을 수 있어요. 안 지으려면 취소하세요.', (t) => t.kind === 'city' && mineF(t), (id) => tileSheet(id));
   }
 
   function attack(type, title, extra) {
@@ -1328,6 +1335,7 @@
     }
     if (mine && t.owe === 'toll') btns.push('<button class="btn small accent" id="tpay">💸 통행료 내기</button>');
     if (mine && t.owe === 'tax') btns.push(`<button class="btn small accent" id="ttax">🧾 세금 ${fmt(G.TAX)} 내기</button>`);
+    if (mine && startBuild()) btns.push('<button class="btn small secondary" id="tbuild">🏁 내 도시에 건물 짓기</button>');
     if (mine && t.mustDraw) btns.push('<button class="btn small accent" id="tdraw">🃏 포춘카드 뽑기</button>');
     if (mine && m.use) {
       btns.push(`<button class="btn small accent" id="tuse">🃏 ${G.CARD[m.use].name} 쓰기</button>`);
@@ -1358,11 +1366,12 @@
     if (q('#tpay')) q('#tpay').onclick = () => { const sp = G.SPACES[state.turn.spot]; if (sp && sp.id) tileSheet(sp.id); };
     if (q('#ttax')) q('#ttax').onclick = autoTax;
     if (q('#tdraw')) q('#tdraw').onclick = fortuneDialog;
+    if (q('#tbuild')) q('#tbuild').onclick = startPick;
     if (q('#tuse')) q('#tuse').onclick = () => useCard(me().use);
     if (q('#tpass')) q('#tpass').onclick = () => confirmBox(`${G.CARD[me().use].name} 카드를 쓰지 않고 반납할까요?`, { type: 'passCard' }, '반납');
     if (q('#tbail')) q('#tbail').onclick = ACTIONS.bail;
     if (q('#tesc')) q('#tesc').onclick = () => run({ type: 'useEscape' });
-    if (q('#tgo')) q('#tgo').onclick = () => pickTile('✈️ 세계여행 — 갈 곳 고르기', `비용 ${fmt(G.TRAVEL)} · 출발지를 지나면 월급`, (sp) => sp.pos !== G.POS.travel, (sp) => {
+    if (q('#tgo')) q('#tgo').onclick = () => pickTile('✈️ 세계여행 — 갈 곳 고르기', `비용 ${fmt(G.TRAVEL)} · 도시·관광지나 출발지로 (출발지를 지나면 월급, 출발지를 고르면 내 도시에 건물 짓기)`, (sp) => G.travelOk(sp.pos), (sp) => {
       const pos = typeof sp === 'string' ? G.TILE[sp].pos : sp.pos;
       autoNext = true;
       run({ type: 'travelTo', to: pos });
@@ -1398,6 +1407,7 @@
     const m = me();
     switch (sp.key) {
       case 'start':
+        if (startBuild()) return startPick();
         endTitle = myTiles().some((t) => t.kind === 'city')
           ? '🏁 출발지 도착! 내 도시 한 곳에 건물을 지을 수 있어요 (\'아직이요\'를 누르고 도시를 누르세요). 차례를 끝낼까요?'
           : '🏁 출발지에 도착했어요. 차례를 끝낼까요?';
@@ -1435,7 +1445,7 @@
       case 'donate': return donateDialog();
       case 'olympicHost': return ACTIONS.olympic();
       case 'goStart':
-        if (appMode() && m.use === 'goStart') return useCard('goStart');
+        if (startBuild()) return startPick();
         endTitle = myTiles().some((t) => t.kind === 'city')
           ? '🏁 출발지로 와서 월급을 받았어요. 내 도시 한 곳에 건물을 지을 수 있어요 (\'아직이요\'를 누르고 도시를 누르세요). 차례를 끝낼까요?'
           : '🏁 출발지로 와서 월급을 받았어요. 차례를 끝낼까요?';
@@ -1825,9 +1835,10 @@
       <b>인수</b> 통행료를 낸 뒤 인수비용(건설비용 2배)을 주인에게. 관광지·랜드마크 도시는 불가.<br>
       <b>매각</b> 통행료·세금이 부족할 때만. 매각비용(건설비용 절반)을 은행에서.<br>
       <b>특수칸</b> 국세청 20만 · 무인도 보석금 20만 · 올림픽 개최 10만(한 곳에만) · 세계여행 10만 · 보너스 게임 40/80/160만.<br>
-      <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행은 다음 차례에 10만 내고 원하는 곳으로. 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
+      <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행 칸에 서면 다음 차례에 주사위 대신 10만 내고 원하는 도시·관광지나 출발지로 (출발지를 고르면 내 도시 한 곳에 건물 짓기). 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
       <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 마블 1등.
-      </div><button class="btn secondary wide mt" data-close>닫기</button>`);
+      </div><div class="row mt"><a class="btn secondary" href="rulebook.pdf" download="모두의마블_메가디럭스_규칙서.pdf" target="_blank">📖 룰북 PDF 받기</a>
+      <button class="btn secondary" data-close>닫기</button></div>`);
   }
 
   // ---------- 화면 꺼짐 방지 ----------

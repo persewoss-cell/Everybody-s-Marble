@@ -536,9 +536,14 @@ function land(room, p) {
   else if (sp.key === 'card') t.mustDraw = true;
 }
 
+// 세계여행으로 갈 수 있는 곳: 도시·관광지, 그리고 출발지 (룰북: '원하는 지역', 출발지를 고르면 건물 짓기)
+function travelOk(pos) {
+  return SPACES[pos] && (SPACES[pos].kind !== 'special' || pos === POS.start);
+}
+
 // 뽑은 뒤 바로 써야 하는 포춘카드 (쓰거나 '사용 안 함'을 눌러야 차례가 넘어감)
-const USE_CARDS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate', 'olympicHost', 'goStart'];
-const USE_ACTION = { olympicHost: 'olympic', goStart: 'build' };
+const USE_CARDS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate', 'olympicHost'];
+const USE_ACTION = { olympicHost: 'olympic' };
 function ownsAny(room, pid, city) {
   return Object.entries(room.props).some(([id, pr]) => pr.owner === pid && (!city || TILE[id].kind === 'city'));
 }
@@ -681,6 +686,7 @@ const actions = {
     requireTurn(room, p);
     const to = toInt(a.to, '칸');
     if (to < 0 || to >= SPACES.length || to === POS.travel) throw new GameError('갈 곳을 골라 주세요.');
+    if (!travelOk(to)) throw new GameError('세계여행은 도시·관광지나 출발지로만 갈 수 있어요.');
     if (appMode(room)) {
       if (room.phase !== 'turns' || !room.turn) throw new GameError('먼저 순서를 정해요.');
       if (!p.travel) throw new GameError('세계여행 칸에 도착한 다음 차례에만 갈 수 있어요.');
@@ -772,7 +778,7 @@ const actions = {
       text += ` +${fmt(deltas[p.id])}`;
     }
     if (appMode(room) && room.turn && room.turn.pid === p.id) room.turn.mustDraw = false;
-    if (appMode(room) && USE_CARDS.includes(key) && !(key === 'goStart' && !ownsAny(room, p.id, true))) p.use = key;
+    if (appMode(room) && USE_CARDS.includes(key)) p.use = key;
     if (to !== null) {
       text += moveTo(room, p, to, deltas, key !== 'islandTrip') + ` → ${SPACES[to].name}`;
       if (appMode(room) && key === 'islandTrip') p.jail = JAIL_TURNS;
@@ -1301,7 +1307,7 @@ function checkRules(room, p, a) {
       return;
     case 'build':
       if (tile && here(tile.pos)) return;
-      if (p.use === 'goStart') return;
+      if (here(POS.start) && !(t.did && t.did.startBuild)) return; // 출발지 도착: 내 도시 한 곳에 건설
       throw new GameError(notHere);
     case 'toll':
       if (!tile || !here(tile.pos) || t.owe !== 'toll') throw new GameError(tile && t.paid === tile.id ? '이미 통행료를 냈어요.' : notHere);
@@ -1352,7 +1358,7 @@ function afterRules(room, p, a) {
       else if (p.use === 'olympicHost') p.use = null;
       break;
     case 'build':
-      if (p.use === 'goStart' && !(tile && t.spot === tile.pos)) p.use = null;
+      if (t.spot === POS.start && tile && tile.pos !== POS.start) t.did.startBuild = true;
       break;
     default:
       if (ATTACKS.includes(a.type) && p.use === a.type) p.use = null;
@@ -1412,7 +1418,7 @@ function roomFromPublic(state) {
 
 const api = {
   MAN, START_MONEY, SALARY, BAIL, TAX, TRAVEL, OLYMPIC_COST, SPONSOR, BONUS, TOUR_PRICE, TOUR_TOLL, TOUR_SELL,
-  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
+  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, travelOk, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
   GameError, createRoom, addPlayer, findByName, applyAction, publicState, roomFromPublic,
   fmt, tollInfo, takeoverPrice, sellPrice, tourLevel, hasMonopoly, canBuild, maxBuilding, builtItems, lastUndoable,
 };

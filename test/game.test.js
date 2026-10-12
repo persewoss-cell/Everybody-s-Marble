@@ -459,9 +459,10 @@ test('앱 모드: 세계여행은 도착한 차례에 못 떠나고 다음 차�
   act(room, 'b', 'endTurn');
   act(room, 'a', 'roll', { dice: [1, 2] });
   act(room, 'a', 'endTurn');
-  act(room, 'b', 'travelTo', { to: 30 }); // 국세청으로 → 세금
-  assert.strictEqual(room.turn.owe, 'tax');
-  assert.throws(() => act(room, 'b', 'endTurn'), /세금/);
+  room.props[id('서울')] = { owner: 'a', built: {}, visits: 0 };
+  act(room, 'b', 'travelTo', { to: 31 }); // 엄마 땅 서울로 → 통행료
+  assert.strictEqual(room.turn.owe, 'toll');
+  assert.throws(() => act(room, 'b', 'endTurn'), /통행료/);
 });
 
 test('앱 모드: 뽑은 공격 카드는 그 카드만 쓰고, 도시기부는 꼭', () => {
@@ -479,5 +480,22 @@ test('앱 모드: 뽑은 공격 카드는 그 카드만 쓰고, 도시기부는 
   act(room, 'b', 'donate', { tileId: id('서울'), to: 'a' });
   assert.strictEqual(room.players[1].use, null);
   act(room, 'b', 'roll', { dice: [1, 2] });
+  act(room, 'b', 'endTurn');
+});
+
+test('앱 모드: 세계여행은 도시·관광지나 출발지로만, 출발지를 고르면 내 도시 한 곳에 건설', () => {
+  const room = appRoom();
+  room.props[id('도쿄')] = { owner: 'b', built: {}, visits: 0 };
+  room.players[1].pos = 20;
+  act(room, 'b', 'roll', { dice: [1, 3] });
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  for (const pos of [12, 8, 2, 16, 30]) assert.throws(() => act(room, 'b', 'travelTo', { to: pos }), /도시·관광지나 출발지/);
+  act(room, 'b', 'travelTo', { to: 0 }); // 출발지 도착 → 월급
+  assert.strictEqual(money(room, 'b'), 220 * M);
+  room.players[1].laps = 1; // 빌딩까지 지을 수 있는 턴
+  act(room, 'b', 'build', { tileId: id('도쿄'), items: ['villa'] });
+  assert.throws(() => act(room, 'b', 'build', { tileId: id('도쿄'), items: ['building'] }), /도착한 칸/); // 한 곳 한 번만
   act(room, 'b', 'endTurn');
 });

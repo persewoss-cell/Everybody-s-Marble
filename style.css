@@ -82,7 +82,7 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 
 .btn {
   display: block; width: 100%; padding: 10px; border: 0; border-radius: 10px; font-weight: 700; font-size: 15px;
-  background: var(--brand); color: #fff;
+  background: var(--brand); color: #fff; text-align: center; text-decoration: none;
 }
 .btn.secondary { background: var(--chip); color: var(--text); }
 .btn.accent { background: var(--accent); color: #1b2236; }
