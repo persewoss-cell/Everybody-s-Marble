@@ -46,6 +46,9 @@
   const prop = (id) => state.props[id];
   const myTiles = (pid) => G.BOARD.filter((t) => prop(t.id) && prop(t.id).owner === (pid || session.playerId));
   const pc = (p) => (p && p.color) || '#a9b0c0';
+  // 2명 이상, 사람은 모두 말 색을 골랐을 때 (컴퓨터는 시작할 때 남은 색)
+  const readyToStart = (st) => st.players.length >= 2 && st.players.every((p) => p.color || p.bot);
+  const BOT_TAG = '<span class="tag bot">🤖 컴퓨터</span>';
   const appMode = () => !!state && state.mode === 'app';
   // 앱으로만 하는 방: 지금 내 차례면 차례 정보, 아니면 null
   const myTurn = () => {
@@ -536,7 +539,7 @@
     const st = e.state;
     const title = (st && st.title) || e.session.code;
     if (!st) return `<div class="troom"><b class="tname">${esc(title)}</b><span class="bigno">${esc(e.session.code)}</span><span class="muted">연결 중...</span></div>`;
-    const ready = st.players.length >= 2 && st.players.every((p) => p.color);
+    const ready = readyToStart(st);
     const status = st.status === 'lobby' ? `대기 ${st.players.length}/4` : st.status === 'playing' ? '게임 중' : '끝남';
     return `<div class="troom ${st.status}">
       <div class="thead"><b class="tname">${esc(title)}</b><span class="tag ${st.status === 'playing' ? 'now' : ''}">${status}</span></div>
@@ -618,7 +621,7 @@
     for (const e of entries) {
       const st = e && e.state;
       if (!st || st.status !== 'lobby') continue;
-      if (st.players.length < 2 || !st.players.every((p) => p.color)) {
+      if (!readyToStart(st)) {
         notReady.push(st.title || st.code);
         continue;
       }
@@ -629,15 +632,16 @@
 
   // 선생님이 연 방 — 대기실
   function renderTeacherLobby() {
-    const ready = state.players.length >= 2 && state.players.every((p) => p.color);
+    const ready = readyToStart(state);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="card center"><div class="muted">${esc(state.title || '')} 방 번호</div><div class="bigcode">${esc(state.code)}</div>
         <div class="sub">${MODE_NAME[state.mode]}</div>
         <div class="row timerrow"><span>${limitText(state)}</span><button class="btn small secondary" id="timer">게임 시간 정하기</button></div></div>
       <div class="card"><h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li><span class="dot" style="background:${pc(p)}"></span>
-          <span class="name">${esc(p.name)}${p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
-          <button class="link" data-kick="${p.id}">내보내기</button></li>`).join('') || '<li class="muted">아직 아무도 안 들어왔어요.</li>'}</ul></div>
+          <span class="name">${esc(p.name)}${p.bot ? BOT_TAG : p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
+          <button class="link" data-kick="${p.id}">내보내기</button></li>`).join('') || '<li class="muted">아직 아무도 안 들어왔어요.</li>'}</ul>
+        ${botButton(true)}</div>
       <button class="btn accent" id="start" ${ready ? '' : 'disabled'}>게임 시작</button>
       <button class="btn secondary mt" id="back2">← 전체 보기</button>
     </div>`;
@@ -647,6 +651,7 @@
     });
     $app.querySelector('#start').onclick = () => run({ type: 'start' });
     $app.querySelector('#back2').onclick = teacherBack;
+    bindBotButton();
     $app.querySelector('#timer').onclick = () => timerDialog();
   }
 
@@ -669,7 +674,7 @@
       <section class="g-players"><div class="card"><ul class="plist">${state.players.map((p) => {
         const turn = t && t.pid === p.id;
         return `<li class="${turn ? 'now' : ''}"><span class="dot" style="background:${pc(p)}"></span>
-          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${turn ? '<span class="tag now">차례</span>' : ''}</span>
+          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? '<span class="tag bot">🤖</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
           <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
           <span class="money">${fmt(p.money)}</span></li>`;
       }).join('')}</ul></div></section>
@@ -705,14 +710,15 @@
         <h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li>
           <span class="dot" style="background:${pc(p)}"></span>
-          <span class="name">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${p.id === session.playerId ? '<span class="tag">나</span>' : ''}</span>
+          <span class="name">${esc(p.name)}${p.bot ? BOT_TAG : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${p.id === session.playerId ? '<span class="tag">나</span>' : ''}</span>
           ${host && p.id !== state.hostId ? `<button class="link" data-kick="${p.id}">내보내기</button>` : ''}
         </li>`).join('')}</ul>
+        ${botButton(host)}
       </div>
       ${colorPicker()}
       <div class="card row timerrow"><span>${limitText(state)}</span>${host ? '<button class="btn small secondary" id="timer">게임 시간 정하기</button>' : ''}</div>
       ${host
-        ? `<button class="btn accent" id="start" ${state.players.length < 2 || state.players.some((p) => !p.color) ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
+        ? `<button class="btn accent" id="start" ${!readyToStart(state) ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
            <div class="sub mt">📱 방장 기기가 은행 역할을 해요. 게임하는 동안 방장 기기는 이 화면을 켜 두세요.</div>`
         : `<div class="card center muted">${state.hostPlays === false ? `${esc(state.hostName || '선생님')}이` : '방장이'} 게임을 시작하기를 기다리는 중...</div>`}
       <div class="row mt"><button class="btn secondary" id="rules">규칙 요약</button><button class="btn secondary" id="leave">나가기</button></div>
@@ -726,6 +732,7 @@
     $app.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => run({ type: 'pickColor', color: b.dataset.color })));
     if (host) $app.querySelector('#start').onclick = () => run({ type: 'start' });
     if (host) $app.querySelector('#timer').onclick = () => timerDialog();
+    bindBotButton();
     $app.querySelector('#leave').onclick = () => confirmBox(host ? '방을 닫을까요? 다른 사람도 나가게 돼요.' : '방에서 나갈까요?', async () => {
       if (conn) await conn.leave();
       goHome();
@@ -866,7 +873,7 @@
             const turn = state.turn && state.turn.pid === p.id;
             return `<li class="${turn ? 'now' : ''}">
             <span class="dot" style="background:${pc(p)}"></span>
-            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
+            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? '<span class="tag bot">🤖</span>' : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
             <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
             <span class="money">${fmt(p.money)}</span>
           </li>`;
@@ -1371,7 +1378,7 @@
     const endOk = t.rolled && !t.again && !t.owe && !t.mustDraw && !m.pendingCard && !mustDonate;
     if (mine) btns.push(`<button class="btn small" id="tend" ${endOk ? '' : 'disabled'}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
-    const note = !mine ? ''
+    const note = !mine ? (cur.bot ? '🤖 컴퓨터가 진행하는 중...' : '')
       : t.owe === 'toll' ? '통행료를 내야 차례를 끝낼 수 있어요'
       : t.owe === 'tax' ? '세금을 내야 차례를 끝낼 수 있어요'
       : t.mustDraw ? '포춘카드를 뽑으세요'
@@ -1928,6 +1935,46 @@
       e.conn.act({ type: 'end', reason: 'time' }).catch(() => timeUp.delete(key));
     }
   }, 1000);
+
+  // ---------- 컴퓨터 플레이어 (앱으로만 하는 방) ----------
+  function botButton(host) {
+    if (!host || state.mode !== 'app') return '';
+    const full = state.players.length >= 4;
+    return `<button class="btn secondary small mt" id="addbot" ${full ? 'disabled' : ''}>🤖 컴퓨터 추가</button>
+      <div class="sub">컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.</div>`;
+  }
+  function bindBotButton() {
+    const b = $app.querySelector('#addbot');
+    if (b) b.onclick = () => run({ type: 'addBot' });
+  }
+  // 방장(은행) 기기: 컴퓨터 차례면 MarbleBot이 고른 동작을 보냄. 동작 사이에 사람이 볼 시간을 둠
+  const Bot = window.MarbleBot;
+  const botWait = {};
+  const botFails = {};
+  setInterval(() => {
+    const hosted = teacher ? Object.values(T.rooms) : session && session.host && conn ? [{ state: serverState || state, conn }] : [];
+    for (const e of hosted) {
+      const st = e.state;
+      if (!st || !e.conn || st.mode !== 'app' || st.status !== 'playing') continue;
+      if ((botWait[st.code] || 0) > Date.now()) continue;
+      for (const p of st.players) {
+        if (!p.bot || p.bankrupt) continue;
+        const step = Bot.next(st, p.id);
+        if (!step) continue;
+        botWait[st.code] = Date.now() + step.wait;
+        e.conn.actAs(p.id, step.action).then(() => (botFails[st.code] = 0), (err) => {
+          console.warn('컴퓨터 동작 실패', step.action, err.message);
+          botWait[st.code] = Date.now() + 1000;
+          // 계속 막히면 방장 권한으로 차례를 넘겨 게임이 멈추지 않게
+          if ((botFails[st.code] = (botFails[st.code] || 0) + 1) >= 3) {
+            botFails[st.code] = 0;
+            e.conn.act({ type: 'endTurn' }).catch(() => {});
+          }
+        });
+        break;
+      }
+    }
+  }, 700);
 
   // ---------- 화면 꺼짐 방지 ----------
   let wakeLock = null;

@@ -270,6 +270,7 @@
         if (req.kind === 'join') {
           // 같은 이름으로 다시 들어오면 그 사람으로 이어서 함 (튕겼을 때)
           const old = G.findByName(room, req.name);
+          if (old && old.bot) throw new G.GameError('컴퓨터 플레이어 이름으로는 들어올 수 없어요.');
           if (old && old.id === room.hostId) throw new G.GameError('방장 이름으로는 다른 기기에서 들어올 수 없어요. 방장 기기에서 다시 열어 주세요.');
           const id = old ? old.id : rand(6);
           if (!old) G.addPlayer(room, req.name, id);
@@ -360,6 +361,15 @@
 
     act(action) {
       return this.request('action', { action });
+    }
+
+    // 방장 기기: 컴퓨터 플레이어로 동작 (토큰은 이 기기에만 있음)
+    actAs(pid, action) {
+      if (!this.host) return Promise.reject(new Error('방장 기기에서만 할 수 있어요.'));
+      const H = this.host;
+      if (!H.tokens[pid]) H.tokens[pid] = rand(16);
+      const res = this.handle({ kind: 'action', action, reqId: rand(8), cid: this.s.cid, token: H.tokens[pid] });
+      return res.ok ? Promise.resolve(res) : Promise.reject(friendlyError(res.error, res.extra));
     }
 
     // 방 닫기(방장) 또는 나가기

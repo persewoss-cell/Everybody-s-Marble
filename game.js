@@ -874,6 +874,19 @@ const actions = {
     Object.assign(tx, { from, to, jump: true });
   },
 
+  // 방장: 컴퓨터 플레이어 추가 (앱으로만 하는 방, 대기실에서). 컴퓨터 차례는 방장 기기가 대신 진행
+  addBot(room, actorId) {
+    requireHost(room, actorId);
+    if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 컴퓨터를 추가할 수 있어요.');
+    if (!appMode(room)) throw new GameError('컴퓨터는 앱으로만 하는 방에서만 함께할 수 있어요.');
+    if (room.players.length >= MAX_PLAYERS) throw new GameError(`최대 ${MAX_PLAYERS}명까지 참가할 수 있습니다.`);
+    let n = 1;
+    while (room.players.some((p) => p.name === `컴퓨터${n}`)) n++;
+    let id;
+    do id = 'bot' + Math.random().toString(36).slice(2, 8); while (room.players.some((p) => p.id === id));
+    room.players.push({ id, name: `컴퓨터${n}`, color: null, money: 0, laps: 0, pos: 0, bankrupt: false, bot: true });
+  },
+
   kick(room, actorId, a) {
     requireHost(room, actorId);
     if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 내보낼 수 있습니다.');
@@ -886,6 +899,12 @@ const actions = {
     requireHost(room, actorId);
     if (room.status !== 'lobby') throw new GameError('이미 시작했습니다.');
     if (room.players.length < 2) throw new GameError('2명 이상이어야 시작할 수 있습니다.');
+    // 컴퓨터는 남은 색을 가짐
+    for (const p of room.players) {
+      if (!p.bot || p.color) continue;
+      const free = PIECES.find((c) => !room.players.some((x) => x.color === c.color));
+      if (free) p.color = free.color;
+    }
     const noColor = room.players.filter((p) => !p.color).map((p) => p.name);
     if (noColor.length) throw new GameError(`${noColor.join(', ')}님이 아직 말 색을 고르지 않았어요.`);
     room.status = 'playing';
@@ -1316,7 +1335,7 @@ function whereAt(a) {
   return null;
 }
 
-const MANAGER_ACTIONS = ['start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
+const MANAGER_ACTIONS = ['addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
@@ -1441,8 +1460,8 @@ function publicState(room) {
     orderScore: room.orderScore || {},
     order: room.order || [],
     turn: room.turn || null,
-    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt, jail, travel, card, pendingCard, use }) =>
-      ({ id, name, color, money, laps, pos: pos || 0, bankrupt, jail: jail || 0, travel: !!travel, card: card || null, pendingCard: pendingCard || null, use: use || null })),
+    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt, jail, travel, card, pendingCard, use, bot }) =>
+      ({ id, name, color, money, laps, pos: pos || 0, bankrupt, jail: jail || 0, travel: !!travel, card: card || null, pendingCard: pendingCard || null, use: use || null, bot: !!bot })),
     props: room.props,
     olympic: room.olympic,
     festival: room.festival,
