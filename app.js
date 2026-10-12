@@ -1305,7 +1305,7 @@
   }
   function diceLabel() {
     const m = me();
-    if (state.mode === 'app' && state.phase === 'order') return '순서 정하기';
+    if (state.mode === 'app' && state.phase === 'order') return '주사위 굴려 순서 정하기';
     if (m.jail > 0 && state.mode === 'app') return '주사위 (더블이면 탈출)';
     if (state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL) return '여행 안 하고 주사위';
     if (state.turn && state.turn.again && state.turn.pid === m.id) return '한 번 더!';
