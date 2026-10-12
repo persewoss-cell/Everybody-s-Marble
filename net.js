@@ -62,6 +62,39 @@
     });
   }
 
+  // ---- 같이 쓰는 연결 ----
+  // 중계 서버마다 연결을 하나만 열어 두고, 쓰는 곳이 하나도 없을 때만 닫음
+  const pool = {};
+  function acquire(url, timeoutMs) {
+    let e = pool[url];
+    if (!e || e.dead) {
+      e = pool[url] = { refs: 0, dead: false, closeTimer: null };
+      e.p = connectBroker(url, timeoutMs || 6000).then(
+        (c) => {
+          c.on('end', () => { e.dead = true; });
+          c.__pool = e;
+          return c;
+        },
+        (err) => { e.dead = true; throw err; },
+      );
+    }
+    e.refs++;
+    clearTimeout(e.closeTimer);
+    return e.p;
+  }
+  function release(client) {
+    const e = client && client.__pool;
+    if (!e) return client && client.end(true);
+    e.refs = Math.max(0, e.refs - 1);
+    // 곧 다시 쓸 수 있으니 바로 닫지 않고 잠깐 기다림
+    if (!e.refs) e.closeTimer = setTimeout(() => { if (!e.refs) { e.dead = true; client.end(true); } }, 20000);
+  }
+  // 가장 먼저 쓸 중계 서버에 미리 연결해 둠 (처음 화면이 뜨자마자)
+  function warmUp() {
+    const url = brokerList()[0];
+    acquire(url).then((c) => release(c), () => {});
+  }
+
   // 방 상태(retained)가 있는지 잠깐 기다려 확인
   function peekRoom(client, code, waitMs) {
     return new Promise((resolve) => {
@@ -136,26 +169,28 @@
         this.host.seen = this.host.seen || {};
         this.host.rev = this.host.rev || 0;
       }
-      this.client = client || (await connectBroker(s.broker));
+      this.client = client || (await acquire(s.broker));
       const c = this.client;
-      c.on('connect', () => {
-        this.connected = true;
-        if (this.host) this.publishState();
-        this.status();
-      });
-      c.on('close', () => {
+      const down = () => {
         this.connected = false;
         this.status();
-      });
-      c.on('offline', () => {
-        this.connected = false;
-        this.status();
-      });
-      c.on('message', (t, payload) => this.onMessage(t, payload));
+      };
+      this.handlers = {
+        connect: () => {
+          this.connected = true;
+          if (this.host) this.publishState();
+          this.status();
+        },
+        close: down,
+        offline: down,
+        message: (t, payload) => this.onMessage(t, payload),
+      };
+      for (const [ev, fn] of Object.entries(this.handlers)) c.on(ev, fn);
       this.connected = c.connected;
 
       const subs = [topic(s.code, 'state'), topic(s.code, 'ping'), topic(s.code, 'res/' + s.cid)];
       if (this.host) subs.push(topic(s.code, 'req'));
+      this.subs = subs;
       c.subscribe(subs, { qos: 1 });
 
       if (this.host) {
@@ -353,7 +388,11 @@
       }
       for (const p of this.pending.values()) clearTimeout(p.timer);
       this.pending.clear();
-      if (this.client) this.client.end(true);
+      const c = this.client;
+      if (!c) return;
+      if (this.handlers) for (const [ev, fn] of Object.entries(this.handlers)) c.removeListener(ev, fn);
+      if (this.subs && c.connected) c.unsubscribe(this.subs);
+      release(c);
     }
   }
 
@@ -376,7 +415,7 @@
     for (const url of brokerList()) {
       let client;
       try {
-        client = await connectBroker(url, 6000);
+        client = await acquire(url);
       } catch (e) {
         lastErr = e;
         continue;
@@ -384,7 +423,8 @@
       for (let i = 0; i < 5; i++) {
         const code = String(1000 + Math.floor(Math.random() * 9000));
         if (taken && taken.includes(code)) continue;
-        const existing = await peekRoom(client, code, 1200);
+        if (taken) taken.push(code); // 동시에 만드는 다른 방이 같은 번호를 고르지 않게
+        const existing = await peekRoom(client, code, 500);
         if (existing && existing.state) continue; // 이미 쓰는 번호
         const playerId = rand(6);
         const token = rand(16);
@@ -393,7 +433,7 @@
         const session = { code, broker: url, playerId, token, cid: rand(6), host: true, name };
         return { session, client };
       }
-      client.end(true);
+      release(client);
       throw new Error('방 번호를 만들지 못했습니다. 다시 시도해 주세요.');
     }
     throw friendlyError('중계 서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요.' + (lastErr ? '' : ''));
@@ -404,7 +444,7 @@
     const H = loadHost(code);
     if (H && H.room && H.room.players.some((p) => p.id === H.room.hostId && p.name === String(name).trim())) {
       const url = brokerList(brokerHint)[0];
-      const client = await connectBroker(url, 6000);
+      const client = await acquire(url);
       const session = { code, broker: url, playerId: H.room.hostId, token: H.tokens[H.room.hostId], cid: rand(6), host: true, name };
       return { session, client };
     }
@@ -412,14 +452,14 @@
     for (const url of brokerList(brokerHint)) {
       let client;
       try {
-        client = await connectBroker(url, 6000);
+        client = await acquire(url);
       } catch {
         continue;
       }
       reachable = true;
-      const existing = await peekRoom(client, code, 2500);
+      const existing = await peekRoom(client, code, 2000);
       if (!existing || !existing.state) {
-        client.end(true);
+        release(client);
         continue;
       }
       const cid = rand(6);
@@ -443,7 +483,8 @@
         const session = { code, broker: url, playerId: res.playerId, token: res.token, cid, host: false, name };
         return { session, client };
       } catch (e) {
-        client.end(true);
+        client.removeListener('message', onMsg);
+        release(client);
         throw e;
       }
     }
@@ -456,6 +497,7 @@
     let stopped = false;
     let client = null;
     let timer = null;
+    let onMsg = null;
     const rooms = new Map();
     const emit = () => {
       if (stopped) return;
@@ -469,21 +511,23 @@
       for (const url of brokerList()) {
         if (stopped) return;
         try {
-          client = await connectBroker(url, 6000);
+          client = await acquire(url);
         } catch {
           continue;
         }
-        if (stopped) return client.end(true);
-        client.on('message', (t, payload) => {
+        if (stopped) return release(client);
+        onMsg = (t, payload) => {
+          if (!t.startsWith(`${PREFIX}/rooms/`)) return;
           const code = t.split('/').pop();
           const info = payload && payload.length ? safeParse(payload) : null;
           if (info && info.code === code) rooms.set(code, { ...info, broker: url });
           else rooms.delete(code);
           emit();
-        });
-        client.subscribe(`${PREFIX}/rooms/+`, { qos: 0 });
+        };
+        client.on('message', onMsg);
+        // 저장된 방 정보는 구독하자마자 바로 오므로 곧바로 보여 줌
+        client.subscribe(`${PREFIX}/rooms/+`, { qos: 0 }, () => setTimeout(emit, 250));
         timer = setInterval(emit, 10000);
-        setTimeout(emit, 1500);
         return;
       }
       if (!stopped) onList([], false);
@@ -491,7 +535,11 @@
     return () => {
       stopped = true;
       clearInterval(timer);
-      if (client) client.end(true);
+      if (client) {
+        if (onMsg) client.removeListener('message', onMsg);
+        if (client.connected) client.unsubscribe(`${PREFIX}/rooms/+`);
+        release(client);
+      }
     };
   }
 
@@ -511,5 +559,5 @@
     return BROKERS[Number(i)] || null;
   }
 
-  root.MarbleNet = { Connection, createRoom, joinRoom, watchRooms, shareUrl, brokerFromIndex, hasHostData: (code) => !!loadHost(code) };
+  root.MarbleNet = { Connection, createRoom, joinRoom, watchRooms, warmUp, shareUrl, brokerFromIndex, hasHostData: (code) => !!loadHost(code) };
 })(typeof self !== 'undefined' ? self : this);

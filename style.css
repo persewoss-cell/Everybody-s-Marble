@@ -393,3 +393,4 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 @media (prefers-color-scheme: dark) { .troom .bigno { color: var(--accent); } }
 .troom .row { justify-content: flex-end; }
 .troom .row > * { flex: none; }
+.maker { text-align: center; color: var(--muted); font-size: 12px; margin: 18px 0 6px; }

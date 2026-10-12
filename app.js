@@ -327,7 +327,7 @@
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="hero"><div class="logo">🎲💰</div><h1>모두의 마블 보조앱</h1><p>보드게임 돈 계산을 각자 휴대폰·태블릿으로</p></div>
       <div class="card">
-        <label class="field"><span>내 이름</span><input type="text" id="name" maxlength="12" placeholder="예: 엄마" value="${esc(lastName())}"></label>
+        <label class="field"><span>내 이름</span><input type="text" id="name" maxlength="12" placeholder="예: 홍길동" value="${esc(lastName())}"></label>
         <div class="sub">튕겼다면 같은 이름으로 같은 방에 들어가면 그대로 이어져요.</div>
       </div>
       <div class="card"><h2>열려 있는 방</h2><div id="rooms"></div></div>
@@ -349,6 +349,7 @@
         <button class="btn" id="tcreate">조별 방 만들기</button>
       </div>
       <button class="btn secondary mt" id="rules">규칙 요약</button>
+      <div class="maker">만든이: 강형권 선생님</div>
     </div>`;
     bindTop();
     let tn = 4;
@@ -432,7 +433,7 @@
     if (!roomList.length) { el.innerHTML = '<div class="muted">지금 열려 있는 방이 없어요.</div>'; return; }
     el.innerHTML = `<ul class="plist">${roomList.map((r) => `<li>
       <span class="name">${r.title ? `<b>${esc(r.title)}</b> · ${esc(r.host)}` : `${esc(r.host)}의 방`} <span class="tag">${esc(r.code)}</span>
-        <span class="muted">${MODE_NAME[r.mode] || MODE_NAME.mixed} · ${r.players.map(esc).join(', ')} · ${r.players.length}/4${r.status === 'playing' ? ' · 게임 중' : ''}</span></span>
+        <span class="muted">${MODE_NAME[r.mode] || MODE_NAME.mixed} · ${r.players.length ? `${r.players.map(esc).join(', ')} · ` : ''}${r.players.length}/4${r.status === 'playing' ? ' · 게임 중' : ''}</span></span>
       ${r.status === 'playing'
         ? `<button class="btn small secondary" data-join="${esc(r.code)}" data-broker="${esc(r.broker)}">이어하기</button>`
         : r.players.length < 4 ? `<button class="btn small" data-join="${esc(r.code)}" data-broker="${esc(r.broker)}">참가</button>` : '<span class="tag">가득 참</span>'}
@@ -458,13 +459,9 @@
   }
 
   async function teacherCreate(count, mode) {
-    const made = [];
     const taken = [];
-    for (let i = 1; i <= count; i++) {
-      const r = await N.createRoom('선생님', mode, { play: false, title: `${i}조` }, taken);
-      taken.push(r.session.code);
-      made.push(r);
-    }
+    const made = await Promise.all(Array.from({ length: count }, (_, i) =>
+      N.createRoom('선생님', mode, { play: false, title: `${i + 1}조` }, taken)));
     teacher = { rooms: made.map((r) => r.session) };
     saveTeacher();
     stopRoomWatch();
