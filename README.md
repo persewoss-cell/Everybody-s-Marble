@@ -45,7 +45,7 @@
 
 ## 들어 있는 규칙 (룰북 기준)
 
-📖 룰북 PDF: https://persewoss-cell.github.io/Everybody-s-Marble/rulebook.pdf — 공식 룰북을 이 앱 규칙에 맞게 고친 것 (빨간 글씨가 달라진 부분, 처음 화면·규칙 요약에서도 받을 수 있어요)
+📖 룰북 PDF: https://persewoss-cell.github.io/Everybody-s-Marble/rulebook.pdf — 공식 룰북을 이 앱 규칙에 맞게 고친 것 (처음 화면·규칙 요약에서도 받을 수 있어요)
 
 
 | 항목 | 내용 |
