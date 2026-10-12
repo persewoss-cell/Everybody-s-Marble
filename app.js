@@ -271,6 +271,7 @@
   function topbar() {
     return `<div class="topbar">${teacher && T.focus ? '<button class="code" id="tback">← 전체</button>' : ''}<b>🎲 모두의 마블 보조앱</b>
       <span class="grow"></span>
+      ${state && state.status === 'playing' && state.endAt ? `<span class="timer" data-endat="${state.endAt}">⏰ ${timeLeft(state.endAt)}</span>` : ''}
       <span id="conn">${connHtml()}</span>
       ${session ? `<button class="code" id="share" title="참가 링크 보내기">${esc(session.code)}</button>` : ''}
       <button class="icon" id="fs" title="전체화면">⛶</button></div>`;
@@ -540,6 +541,7 @@
     return `<div class="troom ${st.status}">
       <div class="thead"><b class="tname">${esc(title)}</b><span class="tag ${st.status === 'playing' ? 'now' : ''}">${status}</span></div>
       <span class="bigno">${esc(st.code)}</span>
+      ${st.status === 'playing' && st.endAt ? `<span class="ttime" data-endat="${st.endAt}">⏰ ${timeLeft(st.endAt)}</span>` : st.status === 'lobby' && st.timeLimit ? `<span class="ttime">⏰ ${st.timeLimit}분</span>` : ''}
       <div class="tdots">${st.players.map((p) => `<span class="dot ${p.bankrupt ? 'out' : ''}" style="background:${pc(p)}" title="${esc(p.name)}"></span>`).join('') || '<span class="muted">아직 없음</span>'}</div>
       <div class="row">${st.status === 'lobby' ? `<button class="btn small accent" data-tstart="${st.code}" ${ready ? '' : 'disabled'}>시작</button>` : ''}
         <button class="btn small secondary" data-topen="${st.code}">열기</button></div>
@@ -580,6 +582,7 @@
       <div class="card thero"><h2>👩‍🏫 선생님 관리 화면</h2>
         <div class="sub">학생들은 처음 화면의 <b>열려 있는 방</b>에서 자기 조를 누르거나 방 번호로 들어와요. 이 컴퓨터가 모든 방의 은행이라 <b>게임하는 동안 이 화면을 켜 두세요</b>. 게임판을 누르면 그 방을 열어요.</div>
         <div class="row mt"><button class="btn accent" id="tall" ${lobbies.length ? '' : 'disabled'}>▶ 대기 중인 방 모두 시작</button>
+          <button class="btn secondary" id="ttimer" ${list.length ? '' : 'disabled'}>⏰ 모든 방 타이머·종료</button>
           <button class="btn secondary" id="tadd">＋ 방 하나 더</button><button class="btn danger" id="tclose">모든 방 닫기</button></div>
       </div>
       <div class="troom-row" style="--n:${Math.max(1, list.length)}">${list.map(teacherRoomCard).join('')}</div>
@@ -589,6 +592,7 @@
     $app.querySelectorAll('[data-topen]').forEach((b) => (b.onclick = () => teacherOpen(b.dataset.topen)));
     $app.querySelectorAll('[data-tstart]').forEach((b) => (b.onclick = () => teacherStart([T.rooms[b.dataset.tstart]])));
     $app.querySelector('#tall').onclick = () => teacherStart(lobbies);
+    $app.querySelector('#ttimer').onclick = () => timerDialog(list);
     $app.querySelector('#tadd').onclick = async () => {
       const n = (teacher.rooms.length || 0) + 1;
       const mode = (list[0] && list[0].state && list[0].state.mode) || 'mixed';
@@ -628,7 +632,8 @@
     const ready = state.players.length >= 2 && state.players.every((p) => p.color);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="card center"><div class="muted">${esc(state.title || '')} 방 번호</div><div class="bigcode">${esc(state.code)}</div>
-        <div class="sub">${MODE_NAME[state.mode]}</div></div>
+        <div class="sub">${MODE_NAME[state.mode]}</div>
+        <div class="row timerrow"><span>${limitText(state)}</span><button class="btn small secondary" id="timer">게임 시간 정하기</button></div></div>
       <div class="card"><h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li><span class="dot" style="background:${pc(p)}"></span>
           <span class="name">${esc(p.name)}${p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
@@ -642,6 +647,7 @@
     });
     $app.querySelector('#start').onclick = () => run({ type: 'start' });
     $app.querySelector('#back2').onclick = teacherBack;
+    $app.querySelector('#timer').onclick = () => timerDialog();
   }
 
   // 선생님이 연 방 — 게임 중 (보기 + 관리)
@@ -656,6 +662,7 @@
           ${t && state.phase === 'turns' ? `<div class="sub">지금 <b>${esc(player(t.pid).name)}</b> 차례</div>` : ''}
           <div class="row mt">${t && state.phase === 'turns' ? '<button class="btn small secondary" id="tskip">차례 넘기기</button>' : ''}
             <button class="btn small secondary" id="hostmenu">관리 메뉴</button>
+            <button class="btn small secondary" id="timer">⏰ 타이머·종료</button>
             <button class="btn small secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
         </div>
       </section>
@@ -675,6 +682,7 @@
     const q = (x) => $app.querySelector(x);
     q('#undo').onclick = undoDialog;
     q('#hostmenu').onclick = hostMenu;
+    q('#timer').onclick = () => timerDialog();
     q('#view').onclick = () => {
       view = view === 'real' ? 'card' : 'real';
       try { localStorage.setItem('marble-view', view); } catch {}
@@ -702,6 +710,7 @@
         </li>`).join('')}</ul>
       </div>
       ${colorPicker()}
+      <div class="card row timerrow"><span>${limitText(state)}</span>${host ? '<button class="btn small secondary" id="timer">게임 시간 정하기</button>' : ''}</div>
       ${host
         ? `<button class="btn accent" id="start" ${state.players.length < 2 || state.players.some((p) => !p.color) ? 'disabled' : ''}>게임 시작 (모두 ${fmt(G.START_MONEY)}, 축제도시 3곳 무작위)</button>
            <div class="sub mt">📱 방장 기기가 은행 역할을 해요. 게임하는 동안 방장 기기는 이 화면을 켜 두세요.</div>`
@@ -716,6 +725,7 @@
     });
     $app.querySelectorAll('[data-color]').forEach((b) => (b.onclick = () => run({ type: 'pickColor', color: b.dataset.color })));
     if (host) $app.querySelector('#start').onclick = () => run({ type: 'start' });
+    if (host) $app.querySelector('#timer').onclick = () => timerDialog();
     $app.querySelector('#leave').onclick = () => confirmBox(host ? '방을 닫을까요? 다른 사람도 나가게 돼요.' : '방에서 나갈까요?', async () => {
       if (conn) await conn.leave();
       goHome();
@@ -862,7 +872,7 @@
           </li>`;
           }).join('')}</ul>
           <div class="row mt">
-            ${host ? '<button class="btn secondary small" id="hostmenu">방장 메뉴</button>' : ''}
+            ${host ? '<button class="btn secondary small" id="hostmenu">방장 메뉴</button><button class="btn secondary small" id="timer">⏰ 타이머·종료</button>' : ''}
             <button class="btn secondary small" id="rules">규칙 요약</button>
             ${m.bankrupt ? '' : '<button class="btn danger small" id="bankrupt">파산</button>'}
           </div>
@@ -882,12 +892,13 @@
       try { localStorage.setItem('marble-view', view); } catch {}
       render();
     };
-    if (q('#dice')) q('#dice').onclick = rollDice;
+    if (q('#dice')) q('#dice').onclick = () => rollDice();
     bindTurnBar();
     if (m.pendingCard && !$modal.innerHTML) keepPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
+    if (q('#timer')) q('#timer').onclick = () => timerDialog();
     if (q('#bankrupt')) q('#bankrupt').onclick = () => bankruptDialog();
   }
 
@@ -1067,7 +1078,7 @@
     island: '3차례 동안 쉬어요. 더블, 보석금 20만, 무인도 탈출 카드로 나올 수 있어요.',
     card: '도착하면 포춘카드를 랜덤으로 뽑아요.',
     olympic: '도착하면 10만을 내고 내 도시 한 곳에 올림픽을 열 수 있어요.',
-    travel: '도착하면 다음 차례에 주사위 대신 10만을 내고 원하는 도시·관광지나 출발지로 가요. 출발지를 지나면 월급도 받아요.',
+    travel: '도착하면 다음 차례에 주사위 대신 10만을 내고 원하는 도시로 가서 사거나 지을 수 있어요 (안 가고 주사위를 굴려도 돼요). 더블로 도착했으면 지금 가거나 한 번 더 굴려요.',
     tax: '도착하면 세금 20만을 내요. 모자라면 도시를 매각해서 내요.',
   };
   function specialSheet(pos) {
@@ -1095,7 +1106,7 @@
       island: [`🏝️ 보석금 ${fmt(G.BAIL)} 내고 탈출`, () => ACTIONS.bail(), '3차례 동안 이동할 수 없어요. 더블, 보석금, 무인도 탈출 카드로 나올 수 있어요.'],
       card: ['🃏 포춘카드', () => { run({ type: 'move', to: pos }, { keepOpen: true }); fortuneDialog(); }, '포춘카드를 뒤집고 미션을 수행하세요.'],
       olympic: [`🏅 올림픽 개최 (${fmt(G.OLYMPIC_COST)})`, () => ACTIONS.olympic(pos), '내 도시 한 곳에 올림픽을 열 수 있어요.'],
-      travel: [`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}`, () => ACTIONS.travel(), '다음 차례에 비용을 내고 원하는 곳으로 가요. 출발지를 지나면 월급도 받아요.'],
+      travel: [`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}`, () => ACTIONS.travel(), '다음 차례에 비용을 내고 원하는 도시로 가서 사거나 지을 수 있어요. 출발지를 지나면 월급도 받아요.'],
       tax: [`🧾 세금 ${fmt(G.TAX)} 내기`, () => ACTIONS.tax(), '세금이 부족하면 도시를 매각해서 내요.'],
     }[sp.key];
     openModal(`<h3>${sp.icon} ${sp.name}</h3>
@@ -1175,7 +1186,7 @@
       ['출발지로 GO', 'silver', '출발지로 이동해 월급, 내 도시에 건설', () => ACTIONS.salary(G.POS.start)],
       ['보너스 게임', 'silver', '보너스 게임으로 이동', () => ACTIONS.bonus()],
       ['강제징수', 'bronze', '국세청으로 이동해 세금 20만', () => ACTIONS.tax()],
-      ['도시기부', 'bronze', '내 도시 하나를 상대에게', () => donateDialog()],
+      ['도시기부', 'bronze', '내 도시 하나를 상대에게 (랜드마크 제외)', () => donateDialog()],
       ['올림픽 관광', 'bronze', '올림픽 개최지로 이동해 통행료', () => (state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.'))],
       ['무인도 탐험', 'bronze', '무인도로 즉시 이동 (월급 없음)', () => moveTo(G.POS.island, '무인도로 옮겼어요.')],
     ]],
@@ -1259,7 +1270,7 @@
       pickTile(`🔄 ${G.TILE[theirs].name}과(와) 바꿀 내 도시`, '', (t) => mineF(t) && noLm(t), (mine) => run({ type: 'swap', tileId: theirs, mineId: mine })));
   }
   function donateDialog() {
-    pickTile('🎁 도시기부 — 줄 내 도시', '', mineF, (id) => {
+    pickTile('🎁 도시기부 — 줄 내 도시', '랜드마크 도시는 기부할 수 없어요.', (t) => mineF(t) && noLm(t), (id) => {
       openModal(`<h3>🎁 ${esc(G.TILE[id].name)}을(를) 누구에게?</h3>${playerChips(others(), null)}
         <button class="btn secondary wide" data-close>취소</button>`, (root) => bindChoice(root, 'p', (to) => run({ type: 'donate', tileId: id, to })));
     });
@@ -1282,22 +1293,38 @@
     if (state.mode !== 'app') return true;
     if (state.phase === 'order') return state.orderRolls[m.id] === null;
     const t = state.turn;
-    return !!t && t.pid === m.id && (!t.rolled || t.again) && (!m.travel || m.money < G.TRAVEL)
+    return !!t && t.pid === m.id && (!t.rolled || t.again)
       && !t.owe && !t.mustDraw && !m.use && !m.pendingCard;
   }
   function diceLabel() {
     const m = me();
     if (state.mode === 'app' && state.phase === 'order') return '순서 정하기';
     if (m.jail > 0 && state.mode === 'app') return '주사위 (더블이면 탈출)';
+    if (state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL) return '여행 안 하고 주사위';
     if (state.turn && state.turn.again && state.turn.pid === m.id) return '한 번 더!';
     return '주사위 굴리기';
   }
-  function rollDice() {
+  function rollDice(noAsk) {
     if (!canRoll() || anim.busy) return;
     const dice = [r6(), r6()];
     if (state.mode === 'app' && state.phase === 'order') return run({ type: 'orderRoll', dice });
-    autoNext = true;
-    run({ type: 'roll', dice });
+    const go = () => {
+      autoNext = true;
+      run({ type: 'roll', dice });
+    };
+    const m = me();
+    // 세계여행을 할 수 있는데 주사위를 누르면: 여행 안 하고 굴리는지 확인
+    if (noAsk !== true && state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL) {
+      return confirmBox('세계여행을 하지 않고 주사위를 굴릴까요?', go, '주사위 굴리기');
+    }
+    go();
+  }
+  function travelPick() {
+    pickTile('✈️ 세계여행 — 갈 도시 고르기', `비용 ${fmt(G.TRAVEL)} · 도착한 도시에서 사거나 건물을 지을 수 있어요 (남의 도시면 통행료). 출발지를 지나면 월급`, (sp) => G.travelOk(sp.pos), (sp) => {
+      const pos = typeof sp === 'string' ? G.TILE[sp].pos : sp.pos;
+      autoNext = true;
+      run({ type: 'travelTo', to: pos });
+    });
   }
 
   function myStatus(m) {
@@ -1325,10 +1352,10 @@
     const mine = t.pid === session.playerId;
     const m = me();
     const btns = [];
-    // 세계여행은 도착한 다음 차례(아직 안 굴렸을 때)에만 떠날 수 있음
-    const travelNow = mine && m.travel && !t.rolled;
-    const mustDonate = m.use === 'donate' && myTiles().length > 0;
-    if (travelNow && m.money >= G.TRAVEL) btns.push(`<button class="btn small accent" id="tgo">✈️ 갈 곳 고르기 (${fmt(G.TRAVEL)})</button>`);
+    // 세계여행은 도착한 다음 차례(주사위 전), 또는 더블로 도착한 그 차례에 떠날 수 있음
+    const travelNow = mine && G.canTravelNow(state, m);
+    const mustDonate = m.use === 'donate' && myTiles().some(noLm);
+    if (travelNow && m.money >= G.TRAVEL) btns.push(`<button class="btn small accent" id="tgo">✈️ 갈 도시 고르기 (${fmt(G.TRAVEL)})</button>`);
     if (mine && m.jail > 0 && !t.rolled) {
       btns.push(`<button class="btn small secondary" id="tbail">보석금 ${fmt(G.BAIL)}</button>`);
       if (m.card === 'escape') btns.push('<button class="btn small secondary" id="tesc">탈출 카드</button>');
@@ -1350,8 +1377,9 @@
       : t.mustDraw ? '포춘카드를 뽑으세요'
       : m.use ? `뽑은 ${G.CARD[m.use].name} 카드를 쓰세요`
       : travelNow && m.money < G.TRAVEL ? `세계여행 비용(${fmt(G.TRAVEL)})이 모자라요. 주사위를 굴려 이동하세요`
-      : travelNow ? '세계여행! 갈 곳을 고르세요'
-      : m.travel ? '세계여행 도착! 다음 차례에 갈 곳을 골라요'
+      : travelNow && t.again ? '더블! 지금 세계여행을 가거나, 안 가고 한 번 더 굴려요'
+      : travelNow ? '세계여행! 갈 도시를 고르거나, 안 가고 주사위를 굴려요'
+      : m.travel ? '세계여행 도착! 다음 차례에 갈 도시를 골라요'
       : m.jail > 0 && !t.rolled ? '무인도: 더블·보석금·탈출 카드로 나와요'
       : t.again ? '더블! 한 번 더 굴려요' : t.rolled ? '할 일을 마치면 차례 끝' : '주사위를 굴리세요';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
@@ -1371,11 +1399,7 @@
     if (q('#tpass')) q('#tpass').onclick = () => confirmBox(`${G.CARD[me().use].name} 카드를 쓰지 않고 반납할까요?`, { type: 'passCard' }, '반납');
     if (q('#tbail')) q('#tbail').onclick = ACTIONS.bail;
     if (q('#tesc')) q('#tesc').onclick = () => run({ type: 'useEscape' });
-    if (q('#tgo')) q('#tgo').onclick = () => pickTile('✈️ 세계여행 — 갈 곳 고르기', `비용 ${fmt(G.TRAVEL)} · 도시·관광지나 출발지로 (출발지를 지나면 월급, 출발지를 고르면 내 도시에 건물 짓기)`, (sp) => G.travelOk(sp.pos), (sp) => {
-      const pos = typeof sp === 'string' ? G.TILE[sp].pos : sp.pos;
-      autoNext = true;
-      run({ type: 'travelTo', to: pos });
-    });
+    if (q('#tgo')) q('#tgo').onclick = travelPick;
   }
 
   // 도착한 칸 화면 자동으로 열기
@@ -1420,7 +1444,17 @@
         endTitle = '🏅 올림픽을 열 내 도시가 없어요. 차례를 끝낼까요?';
         return;
       case 'travel':
-        endTitle = '✈️ 세계여행! 다음 차례에 원하는 곳으로 가요. 차례를 끝낼까요?';
+        if (state.mode === 'app' && state.turn && state.turn.again) {
+          // 더블로 도착: 지금 여행하거나, 안 가고 한 번 더 굴림
+          if (m.money < G.TRAVEL) return toast(`더블! 세계여행 비용(${fmt(G.TRAVEL)})이 모자라 한 번 더 굴려요.`);
+          return openModal(`<h3>✈️ 세계여행 (더블!)</h3>
+            <div class="sub">지금 ${fmt(G.TRAVEL)}을 내고 원하는 도시로 갈 수 있어요. 여행한 도시에서 할 일을 하고 한 번 더 굴려요.<br>안 가면 여기서 주사위를 한 번 더 굴려요.</div>
+            <div class="row"><button class="btn secondary" id="skip">🎲 안 가고 한 번 더 굴리기</button><button class="btn accent" id="tgo2">✈️ 갈 도시 고르기</button></div>`, (root) => {
+            root.querySelector('#tgo2').onclick = travelPick;
+            root.querySelector('#skip').onclick = () => { closeModal(); rollDice(true); };
+          });
+        }
+        endTitle = '✈️ 세계여행! 다음 차례에 10만을 내고 원하는 도시로 갈 수 있어요 (안 가고 주사위를 굴려도 돼요). 차례를 끝낼까요?';
         return;
       case 'tax': return autoTax();
     }
@@ -1457,7 +1491,7 @@
         endTitle = '올림픽 개최지가 없어 패스예요. 차례를 끝낼까요?';
         return;
       case 'travelInvite':
-        endTitle = '✈️ 세계여행 칸으로 왔어요. 다음 차례에 원하는 곳으로 가요. 차례를 끝낼까요?';
+        endTitle = '✈️ 세계여행 칸으로 왔어요. 다음 차례에 10만을 내고 원하는 도시로 갈 수 있어요. 차례를 끝낼까요?';
         return;
       case 'islandTrip':
         endTitle = '🏝️ 무인도로 이동했어요. 차례를 끝낼까요?';
@@ -1671,7 +1705,7 @@
       ${state.mode === 'app' ? `<div class="row"><button class="btn secondary" id="hmove">📍 말 옮기기 (바로잡기)</button><button class="btn secondary" id="hundo" ${G.lastUndoable(state) ? '' : 'disabled'}>↩ 되돌리기</button></div>
       <div class="sub">앱으로만 하는 방에서는 방장만 말을 옮기고 되돌릴 수 있어요. 차례인 사람의 말을 옮기면 그 칸에 도착한 것으로 처리돼요.</div>` : ''}
       <div class="sub mt">게임 종료 (독점은 자동으로 판정돼요)</div>
-      <div class="chips"><button class="chip" data-e="time">⏰ 시간 종료 — 마블 1등 승리</button>
+      <div class="chips"><button class="chip" data-e="time">⏰ 시간 종료 — 총자산 1등 승리</button>
         <button class="chip" data-e="triple">트리플 독점</button><button class="chip" data-e="line">라인 독점</button><button class="chip" data-e="tour">관광지 독점</button></div>
       <button class="btn secondary wide mt" data-close>닫기</button>`, (root) => {
       root.querySelector('#adj').onclick = adjustDialog;
@@ -1683,7 +1717,7 @@
           bindChoice(r, 'p', (v) => confirmBox(`${player(v).name}님을 파산 처리할까요? (남은 마블은 은행으로)`, { type: 'bankrupt', playerId: v })));
       };
       root.querySelectorAll('[data-e]').forEach((b) => (b.onclick = () => {
-        if (b.dataset.e === 'time') return confirmBox('지금 게임을 끝낼까요? 마블이 가장 많은 사람이 이겨요.', { type: 'end', reason: 'time' });
+        if (b.dataset.e === 'time') return confirmBox('지금 게임을 끝낼까요? 총자산(마블 + 땅·건물 건설비용)이 가장 많은 사람이 이겨요.', { type: 'end', reason: 'time' });
         openModal(`<h3>누가 이겼나요?</h3>${playerChips(state.players.filter((p) => !p.bankrupt), null)}<button class="btn secondary wide" data-close>취소</button>`, (r) =>
           bindChoice(r, 'p', (v) => run({ type: 'end', reason: b.dataset.e, winnerId: v })));
       }));
@@ -1835,11 +1869,65 @@
       <b>인수</b> 통행료를 낸 뒤 인수비용(건설비용 2배)을 주인에게. 관광지·랜드마크 도시는 불가.<br>
       <b>매각</b> 통행료·세금이 부족할 때만. 매각비용(건설비용 절반)을 은행에서.<br>
       <b>특수칸</b> 국세청 20만 · 무인도 보석금 20만 · 올림픽 개최 10만(한 곳에만) · 세계여행 10만 · 보너스 게임 40/80/160만.<br>
-      <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행 칸에 서면 다음 차례에 주사위 대신 10만 내고 원하는 도시·관광지나 출발지로 (출발지를 고르면 내 도시 한 곳에 건물 짓기). 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
-      <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 마블 1등.
+      <b>📱 앱으로만 하는 방</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행 칸에 서면 다음 차례에 주사위 대신 10만 내고 원하는 도시로 가서 사거나 짓기 (안 가고 주사위를 굴려도 됨, 더블로 도착했으면 지금 가거나 한 번 더). 포춘카드는 랜덤으로 뽑고 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패(없으면 천사)로 자동 방어.<br>
+      <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 총자산(마블 + 땅·건물·랜드마크 건설비용) 1등.
       </div><div class="row mt"><a class="btn secondary" href="rulebook.pdf" download="모두의마블_메가디럭스_규칙서.pdf" target="_blank">📖 룰북 PDF 받기</a>
       <button class="btn secondary" data-close>닫기</button></div>`);
   }
+
+  // ---------- 게임 시간 (타이머) ----------
+  function timeLeft(endAt) {
+    const sec = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+    if (!sec) return '시간 끝';
+    const m = Math.floor(sec / 60);
+    return `${m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}` : m}:${String(sec % 60).padStart(2, '0')}`;
+  }
+  const limitText = (st) => (st.timeLimit ? `⏰ 게임 시간 ${st.timeLimit}분` : '⏰ 게임 시간 없음');
+  // targets: 선생님 화면에서 여러 방에 한꺼번에 ([{ state, conn }]). 없으면 지금 방
+  function timerDialog(targets) {
+    const list = targets || null;
+    const playing = list ? list.some((e) => e.state && e.state.status === 'playing') : state.status === 'playing';
+    const send = (action) => {
+      if (!list) return run(action);
+      for (const e of list) {
+        if (!e.state || e.state.status === 'ended' || (action.type === 'end' && e.state.status !== 'playing')) continue;
+        e.conn.act(action).catch((err) => toast(`${e.state.title || e.state.code}: ${err.message}`, 'err'));
+      }
+      closeModal();
+    };
+    openModal(`<h3>⏰ 게임 시간${list ? ' — 모든 방' : ''}</h3>
+      <div class="sub">${playing ? '<b>지금부터</b> 몇 분 뒤에 끝낼까요?' : '게임을 <b>시작하면 그때부터</b> 시간이 흘러요.'} 시간이 다 되면 게임이 끝나고, 총자산(마블 + 땅·건물·랜드마크 건설비용)이 가장 많은 사람이 이겨요.</div>
+      <div class="chips big">${[10, 20, 30, 40, 50, 60, 90].map((n) => `<button class="chip" data-min="${n}">${n}분</button>`).join('')}</div>
+      <div class="row"><input type="number" id="min" class="minput" min="1" max="600" placeholder="직접 입력 (분)"><button class="btn accent" id="set">맞추기</button></div>
+      <div class="err" id="err"></div>
+      <div class="row mt"><button class="btn secondary" id="off">타이머 끄기</button><button class="btn secondary" data-close>닫기</button></div>
+      ${playing ? `<button class="btn danger wide mt" id="endnow">⏹ 지금 게임 끝내기 (총자산 1등 승리)</button>` : ''}`, (root) => {
+      root.querySelectorAll('[data-min]').forEach((b) => (b.onclick = () => send({ type: 'timer', minutes: Number(b.dataset.min) })));
+      root.querySelector('#set').onclick = () => {
+        const n = Math.round(Number(root.querySelector('#min').value));
+        if (!(n >= 1 && n <= 600)) return (root.querySelector('#err').textContent = '1~600분 사이로 적어 주세요.');
+        send({ type: 'timer', minutes: n });
+      };
+      root.querySelector('#off').onclick = () => send({ type: 'timer', minutes: 0 });
+      if (root.querySelector('#endnow')) root.querySelector('#endnow').onclick = () => confirmBox(
+        `${list ? '게임 중인 모든 방을' : '지금 게임을'} 끝낼까요?\n총자산(마블 + 땅·건물 건설비용)이 가장 많은 사람이 이겨요.`,
+        () => send({ type: 'end', reason: 'time' }), '게임 끝내기');
+    });
+  }
+  // 1초마다 남은 시간 표시, 시간이 다 되면 방장(은행) 기기가 게임을 끝냄
+  const timeUp = new Set();
+  setInterval(() => {
+    document.querySelectorAll('[data-endat]').forEach((el) => (el.textContent = `⏰ ${timeLeft(Number(el.dataset.endat))}`));
+    const hosted = teacher ? Object.values(T.rooms) : session && session.host && conn ? [{ state: serverState || state, conn }] : [];
+    for (const e of hosted) {
+      const st = e.state;
+      if (!st || !e.conn || st.status !== 'playing' || !st.endAt || Date.now() < st.endAt) continue;
+      const key = `${st.code}:${st.endAt}`;
+      if (timeUp.has(key)) continue;
+      timeUp.add(key);
+      e.conn.act({ type: 'end', reason: 'time' }).catch(() => timeUp.delete(key));
+    }
+  }, 1000);
 
   // ---------- 화면 꺼짐 방지 ----------
   let wakeLock = null;

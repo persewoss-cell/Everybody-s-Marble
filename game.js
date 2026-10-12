@@ -177,6 +177,8 @@ function createRoom(code, hostName, hostId, mode, opts) {
     log: [],
     nextTxId: 1,
     result: null,
+    timeLimit: 0,  // 게임 시간(분). 0이면 없음
+    endAt: null,   // 게임이 끝나는 시각 (시작하거나 타이머를 맞추면 정해짐)
   };
   if (room.hostPlays) addPlayer(room, hostName, hostId);
   return room;
@@ -232,6 +234,16 @@ function ensureFunds(p, amount, sellable) {
 function builtItems(tile, prop) {
   if (!prop || tile.kind !== 'city') return [];
   return ['land', ...BUILDINGS.filter((k) => prop.built && prop.built[k])];
+}
+// 시간 종료 때 비교하는 총자산: 마블 + 보유한 도시의 땅·건물·랜드마크 건설비용 (관광지는 구매비용)
+function assetValue(room, pid) {
+  let v = 0;
+  for (const [id, prop] of Object.entries(room.props)) {
+    if (prop.owner !== pid) continue;
+    const t = TILE[id];
+    v += t.kind === 'tour' ? TOUR_PRICE : builtItems(t, prop).reduce((s, k) => s + t.cost[k], 0);
+  }
+  return v;
 }
 function ownerOf(room, tileId) {
   return room.props[tileId] ? room.props[tileId].owner : null;
@@ -536,9 +548,15 @@ function land(room, p) {
   else if (sp.key === 'card') t.mustDraw = true;
 }
 
-// 세계여행으로 갈 수 있는 곳: 도시·관광지, 그리고 출발지 (룰북: '원하는 지역', 출발지를 고르면 건물 짓기)
+// 세계여행으로 갈 수 있는 곳: 도시 (일반도시·관광지도시) — 룰북 9쪽 '원하는 도시로 이동하고 건설'
 function travelOk(pos) {
-  return SPACES[pos] && (SPACES[pos].kind !== 'special' || pos === POS.start);
+  return !!SPACES[pos] && SPACES[pos].kind !== 'special';
+}
+// 지금 세계여행을 떠날 수 있는지: 도착한 다음 차례(주사위 전), 또는 더블로 도착한 그 차례
+function canTravelNow(room, p) {
+  const t = room.turn;
+  if (!p.travel || !t || t.pid !== p.id) return false;
+  return !t.rolled || (t.again && t.spot === POS.travel);
 }
 
 // 뽑은 뒤 바로 써야 하는 포춘카드 (쓰거나 '사용 안 함'을 눌러야 차례가 넘어감)
@@ -546,6 +564,10 @@ const USE_CARDS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust'
 const USE_ACTION = { olympicHost: 'olympic' };
 function ownsAny(room, pid, city) {
   return Object.entries(room.props).some(([id, pr]) => pr.owner === pid && (!city || TILE[id].kind === 'city'));
+}
+// 기부할 수 있는 도시가 있는지 (랜드마크 도시 제외)
+function canDonate(room, pid) {
+  return Object.values(room.props).some((pr) => pr.owner === pid && !(pr.built && pr.built.landmark));
 }
 function mustFinish(room, p) {
   const t = room.turn;
@@ -621,7 +643,6 @@ const actions = {
       if (room.phase !== 'turns') throw new GameError('먼저 순서를 정해요.');
       requireTurn(room, p);
       if (t.rolled && !t.again) throw new GameError('이번 차례에는 이미 굴렸어요. "차례 끝"을 눌러 주세요.');
-      if (p.travel && p.money >= TRAVEL) throw new GameError('세계여행 중이에요. 갈 곳을 골라 주세요.');
       mustFinish(room, p);
     }
     // 세계여행 비용이 모자라면 여행을 못 하고 주사위로 이동 (여행 비용은 매각으로 마련할 수 없음)
@@ -632,7 +653,8 @@ const actions = {
     const before = snapshot(room);
     const deltas = {};
     const from = p.pos || 0;
-    let text = `${noTravel ? '세계여행 비용이 모자라 주사위로 이동 · ' : ''}${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
+    const skip = noTravel ? (p.money < TRAVEL ? '세계여행 비용이 모자라 주사위로 이동 · ' : '세계여행 안 함 · ') : '';
+    let text = `${skip}${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
     if (noTravel) p.travel = false;
     if (app) {
       t.rolled = true;
@@ -671,8 +693,7 @@ const actions = {
     }
     if (app && to === POS.travel) {
       p.travel = true;
-      t.again = false;
-      text += ' (다음 차례에 세계여행)';
+      text += t.again ? ' (더블! 지금 세계여행을 하거나 한 번 더 굴리기)' : ' (다음 차례에 세계여행)';
     }
     land(room, p);
     const tx = record(room, actorId, 'roll', text, deltas, before);
@@ -686,11 +707,14 @@ const actions = {
     requireTurn(room, p);
     const to = toInt(a.to, '칸');
     if (to < 0 || to >= SPACES.length || to === POS.travel) throw new GameError('갈 곳을 골라 주세요.');
-    if (!travelOk(to)) throw new GameError('세계여행은 도시·관광지나 출발지로만 갈 수 있어요.');
+    if (!travelOk(to)) throw new GameError('세계여행은 도시로만 갈 수 있어요.');
+    let again = false;
     if (appMode(room)) {
       if (room.phase !== 'turns' || !room.turn) throw new GameError('먼저 순서를 정해요.');
       if (!p.travel) throw new GameError('세계여행 칸에 도착한 다음 차례에만 갈 수 있어요.');
-      if (room.turn.rolled) throw new GameError('세계여행은 다음 차례에 떠나요. 지금은 차례를 끝내 주세요.');
+      if (!canTravelNow(room, p)) throw new GameError('세계여행은 다음 차례에 떠나요. 지금은 차례를 끝내 주세요.');
+      mustFinish(room, p);
+      again = room.turn.rolled && room.turn.again; // 더블로 도착했으면 여행한 도시에서 한 번 더
     }
     ensureFunds(p, TRAVEL);
     const before = snapshot(room);
@@ -698,7 +722,7 @@ const actions = {
     const from = p.pos || 0;
     const note = moveTo(room, p, to, deltas);
     p.travel = false;
-    if (appMode(room) && room.turn) Object.assign(room.turn, { rolled: true, again: false });
+    if (appMode(room) && room.turn) Object.assign(room.turn, { rolled: true, again });
     if (appMode(room) && to === POS.island) p.jail = JAIL_TURNS;
     land(room, p);
     const tx = record(room, actorId, 'roll', `${p.name} ✈️ 세계여행 → ${SPACES[to].name} -${fmt(TRAVEL)}${note}`, deltas, before);
@@ -716,7 +740,7 @@ const actions = {
     if (!host && !p.bankrupt) {
       if (!t.rolled) throw new GameError('먼저 주사위를 굴려 주세요.');
       if (t.again) throw new GameError('더블! 한 번 더 굴려요.');
-      if (p.use && !(p.use === 'donate' && ownsAny(room, p.id))) p.use = null; // 쓸 수 없는 카드는 그냥 버림
+      if (p.use && !(p.use === 'donate' && canDonate(room, p.id))) p.use = null; // 쓸 수 없는 카드는 그냥 버림
       mustFinish(room, p);
     }
     const before = snapshot(room);
@@ -808,7 +832,7 @@ const actions = {
     requirePlaying(room);
     const p = activePlayer(room, actorId);
     if (!p.use) throw new GameError('쓸 카드가 없어요.');
-    if (p.use === 'donate' && ownsAny(room, p.id) && actorId !== room.hostId) throw new GameError('도시기부는 꼭 해야 해요. 줄 내 도시를 골라 주세요.');
+    if (p.use === 'donate' && canDonate(room, p.id) && actorId !== room.hostId) throw new GameError('도시기부는 꼭 해야 해요. 줄 내 도시를 골라 주세요.');
     const before = snapshot(room);
     const key = p.use;
     p.use = null;
@@ -887,7 +911,8 @@ const actions = {
       room.orderRolls = Object.fromEntries(room.players.map((p) => [p.id, null]));
     }
     const names = room.festival.map((id) => TILE[id].name).join(', ');
-    record(room, actorId, 'start', `게임 시작! 모두 ${fmt(START_MONEY)} · 축제도시: ${names}`, deltas);
+    room.endAt = room.timeLimit ? Date.now() + room.timeLimit * 60000 : null;
+    record(room, actorId, 'start', `게임 시작! 모두 ${fmt(START_MONEY)} · 축제도시: ${names}${room.timeLimit ? ` · 게임 시간 ${room.timeLimit}분` : ''}`, deltas);
   },
 
   // 출발지를 지날 때 월급 (월급 부스터 카드면 2배). 턴이 하나 늘어남
@@ -1147,12 +1172,13 @@ const actions = {
     record(room, actorId, 'card', `${p.name} 도시체인지: [${mine.tile.name}] ↔ ${owner.name}의 [${tile.name}]`, {}, before);
     autoWin(room, p.id, owner.id);
   },
-  // 도시기부: 내 도시 하나를 원하는 상대에게 (랜드마크 도시도 가능)
+  // 도시기부: 내 도시 하나를 원하는 상대에게 (랜드마크 도시 제외 — 룰북 12쪽)
   donate(room, actorId, a) {
     requirePlaying(room);
     const p = activePlayer(room, actorId);
     const { tile, prop } = tileOf(room, a.tileId, 'owned');
     if (prop.owner !== p.id) throw new GameError('내 도시를 골라 주세요.');
+    noLandmark(tile, prop, '기부');
     const to = activePlayer(room, a.to);
     if (to.id === p.id) throw new GameError('받을 사람을 골라 주세요.');
     const before = snapshot(room);
@@ -1177,6 +1203,7 @@ const actions = {
     }
     for (const id of Object.keys(room.props)) if (room.props[id].owner === p.id) removeProp(room, id);
     p.bankrupt = true;
+    Object.assign(p, { card: null, pendingCard: null, use: null, travel: false, jail: 0 }); // 보관 카드는 모두 버림 (룰북 8쪽)
     record(room, actorId, 'bankrupt', text, deltas, before);
     lastSurvivor(room);
     if (appMode(room) && room.phase === 'turns' && room.turn && room.turn.pid === p.id && room.status === 'playing') nextTurn(room);
@@ -1214,8 +1241,11 @@ const actions = {
     requireHost(room, actorId);
     requirePlaying(room);
     if (a.reason === 'time') {
-      const rich = room.players.filter((p) => !p.bankrupt).sort((x, y) => y.money - x.money)[0];
-      room.result = { winnerId: rich.id, reason: '시간 종료', detail: `게임 종료 시점에 보유 마블이 가장 많음 (${fmt(rich.money)})`, at: Date.now() };
+      // 룰북 3쪽: 보유 마블 + 보유한 도시의 땅·건물·랜드마크 건설비용이 가장 많은 사람
+      const total = (p) => p.money + assetValue(room, p.id);
+      const rich = room.players.filter((p) => !p.bankrupt).sort((x, y) => total(y) - total(x))[0];
+      const v = assetValue(room, rich.id);
+      room.result = { winnerId: rich.id, reason: '시간 종료', detail: `총자산이 가장 많음: 마블 ${fmt(rich.money)} + 땅·건물 ${fmt(v)} = ${fmt(rich.money + v)}`, at: Date.now() };
     } else {
       const w = activePlayer(room, a.winnerId);
       const reasons = { triple: '트리플 독점', line: '라인 독점', tour: '관광지 독점' };
@@ -1224,9 +1254,21 @@ const actions = {
     room.status = 'ended';
   },
 
+  // 방장: 게임 시간 정하기 (대기실에서는 시작할 때부터, 게임 중에는 지금부터). 0이면 끄기
+  timer(room, actorId, a) {
+    requireHost(room, actorId);
+    if (room.status === 'ended') throw new GameError('이미 끝난 게임이에요.');
+    const min = toInt(a.minutes, '시간');
+    if (min < 0 || min > 600) throw new GameError('0~600분 사이로 정해 주세요.');
+    room.timeLimit = min;
+    if (room.status !== 'playing') return;
+    room.endAt = min ? Date.now() + min * 60000 : null;
+    record(room, actorId, 'info', min ? `⏰ 게임 시간: 지금부터 ${min}분` : '⏰ 타이머를 껐어요', {});
+  },
+
   reset(room, actorId) {
     requireHost(room, actorId);
-    Object.assign(room, { status: 'lobby', result: null, log: [], props: {}, effects: {}, olympic: null, festival: [] });
+    Object.assign(room, { status: 'lobby', result: null, log: [], props: {}, effects: {}, olympic: null, festival: [], endAt: null });
     for (const p of room.players) Object.assign(p, { money: 0, laps: 0, bankrupt: false });
   },
 };
@@ -1274,7 +1316,7 @@ function whereAt(a) {
   return null;
 }
 
-const MANAGER_ACTIONS = ['start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move'];
+const MANAGER_ACTIONS = ['start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
@@ -1283,7 +1325,7 @@ function checkRules(room, p, a) {
   const t = room.turn;
   const type = a.type;
   if (['move', 'salary', 'transfer', 'sponsor', 'undo'].includes(type)) throw new GameError(`앱으로만 하는 방에서는 ${HOST_FIX}`);
-  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard'].includes(type)) return;
+  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard', 'timer'].includes(type)) return;
   if (room.status !== 'playing') return;
   if (room.phase !== 'turns' || !t) throw new GameError('먼저 순서를 정해요.');
   if (t.pid !== p.id) throw new GameError(`지금은 ${pname(room, t.pid)}님 차례예요.`);
@@ -1408,6 +1450,8 @@ function publicState(room) {
     log: room.log.slice(-80).map(({ before, ...t }) => (before ? { ...t, canUndo: true } : t)),
     nextTxId: room.nextTxId,
     result: room.result,
+    timeLimit: room.timeLimit || 0,
+    endAt: room.endAt || null,
   };
 }
 
@@ -1418,7 +1462,7 @@ function roomFromPublic(state) {
 
 const api = {
   MAN, START_MONEY, SALARY, BAIL, TAX, TRAVEL, OLYMPIC_COST, SPONSOR, BONUS, TOUR_PRICE, TOUR_TOLL, TOUR_SELL,
-  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, travelOk, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
+  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, travelOk, canTravelNow, canDonate, assetValue, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
   GameError, createRoom, addPlayer, findByName, applyAction, publicState, roomFromPublic,
   fmt, tollInfo, takeoverPrice, sellPrice, tourLevel, hasMonopoly, canBuild, maxBuilding, builtItems, lastUndoable,
 };

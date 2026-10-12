@@ -164,7 +164,7 @@ test('포춘카드: 지진·외계인 침공·강제매각·도시체인지·도
   assert.strictEqual(money(room, 'c'), c + 14 * M); // 아빠는 4만뿐이라 4만만
 });
 
-test('랜드마크 도시는 인수·공격 불가, 도시기부는 가능', () => {
+test('랜드마크 도시는 인수·공격·기부 불가', () => {
   const room = setup();
   give(room, 'a', 3);
   act(room, 'a', 'buy', { tileId: id('로마'), items: ['villa', 'building', 'hotel'] });
@@ -172,7 +172,7 @@ test('랜드마크 도시는 인수·공격 불가, 도시기부는 가능', () 
   assert.throws(() => act(room, 'b', 'takeover', { tileId: id('로마') }));
   assert.throws(() => act(room, 'b', 'quake', { tileId: id('로마') }));
   assert.throws(() => act(room, 'b', 'forceSell', { tileId: id('로마') }));
-  act(room, 'a', 'donate', { tileId: id('로마'), to: 'b' });
+  assert.throws(() => act(room, 'a', 'donate', { tileId: id('로마'), to: 'b' }), /기부/);
 });
 
 test('되돌리기: 가장 최근 거래부터, 땅과 턴까지 원래대로', () => {
@@ -330,7 +330,6 @@ test('앱 모드: 세계여행은 다음 차례에 원하는 곳으로', () => {
   act(room, 'b', 'endTurn');
   act(room, 'a', 'roll', { dice: [1, 2] });
   act(room, 'a', 'endTurn');
-  assert.throws(() => act(room, 'b', 'roll', { dice: [1, 2] }), /세계여행/);
   act(room, 'b', 'travelTo', { to: 5 }); // 출발지 지나서 월급
   assert.strictEqual(room.players[1].pos, 5);
   assert.strictEqual(money(room, 'b'), 220 * M);
@@ -449,13 +448,11 @@ test('앱 모드: 세금은 꼭 내고, 마음대로 말 옮기기·송금·월�
   act(room, 'b', 'endTurn');
 });
 
-test('앱 모드: 세계여행은 도착한 차례에 못 떠나고 다음 차례에 (더블이어도 한 번 더 없음)', () => {
+test('앱 모드: 세계여행은 도착한 차례엔 못 떠나고 다음 차례에, 안 가고 주사위를 굴려도 됨', () => {
   const room = appRoom();
   room.players[1].pos = 20;
-  act(room, 'b', 'roll', { dice: [2, 2] }); // 더블로 세계여행 도착
-  assert.strictEqual(room.turn.again, false);
+  act(room, 'b', 'roll', { dice: [1, 3] }); // 세계여행 도착 (더블 아님)
   assert.throws(() => act(room, 'b', 'travelTo', { to: 5 }), /다음 차례/);
-  assert.throws(() => act(room, 'b', 'roll', { dice: [1, 2] }), /이미 굴렸어요/);
   act(room, 'b', 'endTurn');
   act(room, 'a', 'roll', { dice: [1, 2] });
   act(room, 'a', 'endTurn');
@@ -463,6 +460,39 @@ test('앱 모드: 세계여행은 도착한 차례에 못 떠나고 다음 차�
   act(room, 'b', 'travelTo', { to: 31 }); // 엄마 땅 서울로 → 통행료
   assert.strictEqual(room.turn.owe, 'toll');
   assert.throws(() => act(room, 'b', 'endTurn'), /통행료/);
+  act(room, 'b', 'toll', { tileId: id('서울') });
+  act(room, 'b', 'endTurn');
+  // 다음에 또 세계여행에 서면, 이번엔 안 가고 주사위
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  room.players[1].pos = 20;
+  act(room, 'b', 'roll', { dice: [1, 3] });
+  act(room, 'b', 'endTurn');
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  act(room, 'a', 'endTurn');
+  act(room, 'b', 'roll', { dice: [2, 3] }); // 여행 안 함
+  assert.strictEqual(room.players[1].pos, 29);
+  assert.strictEqual(room.players[1].travel, false);
+});
+
+test('앱 모드: 더블로 세계여행에 서면 지금 여행하거나 한 번 더 굴림', () => {
+  const room = appRoom();
+  room.players[1].pos = 20;
+  act(room, 'b', 'roll', { dice: [2, 2] }); // 더블로 세계여행 도착
+  assert.strictEqual(room.turn.again, true);
+  assert.throws(() => act(room, 'b', 'endTurn'), /더블/);
+  act(room, 'b', 'travelTo', { to: 10 }); // 바로 도쿄로
+  assert.strictEqual(room.players[1].pos, 10);
+  act(room, 'b', 'buy', { tileId: id('도쿄') });
+  assert.throws(() => act(room, 'b', 'endTurn'), /더블/); // 여행한 도시에서 한 번 더
+  act(room, 'b', 'roll', { dice: [1, 2] });
+  act(room, 'b', 'endTurn');
+  // 여행 안 하고 한 번 더
+  room.players[0].pos = 20;
+  act(room, 'a', 'roll', { dice: [2, 2] });
+  act(room, 'a', 'roll', { dice: [1, 2] });
+  assert.strictEqual(room.players[0].pos, 27);
+  assert.strictEqual(room.players[0].travel, false);
 });
 
 test('앱 모드: 뽑은 공격 카드는 그 카드만 쓰고, 도시기부는 꼭', () => {
@@ -483,7 +513,7 @@ test('앱 모드: 뽑은 공격 카드는 그 카드만 쓰고, 도시기부는 
   act(room, 'b', 'endTurn');
 });
 
-test('앱 모드: 세계여행은 도시·관광지나 출발지로만, 출발지를 고르면 내 도시 한 곳에 건설', () => {
+test('앱 모드: 세계여행은 도시로만 (특수칸·출발지 불가), 도착한 도시에서 건설', () => {
   const room = appRoom();
   room.props[id('도쿄')] = { owner: 'b', built: {}, visits: 0 };
   room.players[1].pos = 20;
@@ -491,11 +521,28 @@ test('앱 모드: 세계여행은 도시·관광지나 출발지로만, 출발�
   act(room, 'b', 'endTurn');
   act(room, 'a', 'roll', { dice: [1, 2] });
   act(room, 'a', 'endTurn');
-  for (const pos of [12, 8, 2, 16, 30]) assert.throws(() => act(room, 'b', 'travelTo', { to: pos }), /도시·관광지나 출발지/);
-  act(room, 'b', 'travelTo', { to: 0 }); // 출발지 도착 → 월급
+  for (const pos of [0, 12, 8, 2, 16, 30]) assert.throws(() => act(room, 'b', 'travelTo', { to: pos }), /도시로만/);
+  act(room, 'b', 'travelTo', { to: 10 }); // 출발지 지나 월급
   assert.strictEqual(money(room, 'b'), 220 * M);
-  room.players[1].laps = 1; // 빌딩까지 지을 수 있는 턴
   act(room, 'b', 'build', { tileId: id('도쿄'), items: ['villa'] });
-  assert.throws(() => act(room, 'b', 'build', { tileId: id('도쿄'), items: ['building'] }), /도착한 칸/); // 한 곳 한 번만
   act(room, 'b', 'endTurn');
+});
+
+test('시간 종료: 마블 + 땅·건물 건설비용이 가장 많은 사람, 타이머는 방장만', () => {
+  const room = setup();
+  assert.throws(() => act(room, 'b', 'timer', { minutes: 30 }), /방장/);
+  act(room, 'a', 'timer', { minutes: 30 });
+  assert.ok(room.endAt > Date.now());
+  act(room, 'b', 'buy', { tileId: id('서울'), items: ['villa'] }); // 30만 써도 자산은 그대로
+  act(room, 'a', 'transfer', { to: 'bank', amount: 10 * M });
+  act(room, 'a', 'end', { reason: 'time' });
+  assert.strictEqual(room.result.winnerId, 'b');
+  assert.match(room.result.detail, /200만/);
+});
+
+test('파산하면 보관 카드도 버림', () => {
+  const room = appRoom();
+  room.players[1].card = 'shield';
+  act(room, 'b', 'bankrupt');
+  assert.strictEqual(room.players[1].card, null);
 });
