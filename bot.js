@@ -273,7 +273,7 @@ function travelTarget(st, p, reserve) {
 function next(st, pid) {
   const p = st.players.find((x) => x.id === pid);
   if (!p || !p.bot || p.bankrupt || st.status !== 'playing' || st.mode !== 'app') return null;
-  if (st.phase === 'order') return st.orderRolls[pid] === null ? act({ type: 'orderRoll', dice: [d6(), d6()] }, 4800) : null;
+  if (st.phase === 'order') return st.orderRolls[pid] === null ? act({ type: 'orderRoll', dice: [d6(), d6()] }, 3200) : null;
   const t = st.turn;
   if (!t || t.pid !== pid) return null;
   const key = `${st.code}:${pid}:${landId(st)}`;
@@ -379,7 +379,7 @@ function next(st, pid) {
   }
   if (!t.rolled || t.again) {
     const dice = [d6(), d6()];
-    return act({ type: 'roll', dice }, 5600 + (dice[0] + dice[1]) * 240);
+    return act({ type: 'roll', dice }, 3700 + (dice[0] + dice[1]) * 240);
   }
   return act({ type: 'endTurn' }, 1200);
 }

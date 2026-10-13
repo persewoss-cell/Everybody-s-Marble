@@ -422,3 +422,28 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .troom .ttime { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 13px; }
 .tag.bot { background: #dfe7ff; color: #1b2236; }
 .passnote { background: #fff4c2; color: #1b2236; border-radius: 8px; padding: 6px 10px; margin: 4px 0; }
+
+/* 칸 아래 통행료·구입비: 한 줄로, 칸 너비에 맞춰 글자 크기 */
+.lbl .tp { white-space: nowrap; letter-spacing: -0.3px; overflow: hidden; max-width: 100%; }
+.rboard .lbl .tp { font-size: clamp(5px, min(13cqmin, 12.5cqi), 12px); }
+.rboard .cell.l .lbl .tp, .rboard .cell.r .lbl .tp { font-size: clamp(5px, min(11cqmin, 8.4cqi), 11px); }
+.tiles .tile .lbl .tp { font-size: 10px; }
+
+/* 승리 이유 */
+.winner .wsub { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.wrows { display: flex; flex-direction: column; gap: 6px; padding: 0 12px; text-align: left; }
+.wrow { display: flex; align-items: center; gap: 8px; border-radius: 12px; padding: 6px 8px;
+  background: color-mix(in srgb, var(--c) 16%, var(--card)); border: 1.5px solid color-mix(in srgb, var(--c) 55%, var(--card)); }
+.wlabel { flex: none; min-width: 48px; text-align: center; font-weight: 800; color: #fff; background: var(--c); border-radius: 8px; padding: 4px 8px;
+  text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.wtiles { display: flex; flex-wrap: wrap; gap: 5px; }
+.wtile { background: var(--card); border: 1px solid color-mix(in srgb, var(--c) 60%, var(--card)); border-radius: 999px; padding: 3px 10px; font-weight: 700; font-size: 14px; }
+.wtile i { font-style: normal; font-size: 12px; margin-left: 3px; }
+.wout { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.wplayer { display: inline-flex; align-items: center; gap: 5px; background: var(--chip); border-radius: 999px; padding: 4px 10px; font-weight: 700; color: var(--muted); }
+.wstats { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.wstats > div { background: var(--chip); border-radius: 10px; padding: 6px 12px; display: flex; flex-direction: column; min-width: 70px; }
+.wstats small { color: var(--muted); font-size: 11px; }
+.wstats b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.wstats .tot { background: color-mix(in srgb, var(--pc) 22%, var(--card)); }
+.wstats > span { font-weight: 800; color: var(--muted); }

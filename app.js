@@ -20,6 +20,9 @@
   let predictedNext = 0;
   let lastSeenTx = 0;
   let firstState = true;
+  // 주사위·포춘카드 장면이 끝날 때까지 화면에 보여 줄 이전 상태 (결과가 미리 보이지 않게)
+  let heldState = null;
+  let heldToasts = [];
 
   function loadSession() {
     try { return JSON.parse(localStorage.getItem('marble-session')) || null; } catch { return null; }
@@ -82,7 +85,7 @@
       G.applyAction(copy, session.playerId, action); // 안 되는 동작이면 여기서 바로 오류
       const next = G.publicState(copy);
       predictedNext = next.nextTxId;
-      state = next;
+      adopt(next);
       render();
     }
     pending++;
@@ -235,14 +238,19 @@
     serverState = s;
     if (!s.players.some((p) => p.id === session.playerId)) return goHome('방에서 나가게 되었습니다.');
     // 내 동작이 아직 확정 전이면, 그 동작이 들어간 상태가 올 때까지 미리 계산한 화면을 유지
-    if (!(pending && s.nextTxId < predictedNext)) state = s;
+    if (!(pending && s.nextTxId < predictedNext)) adopt(s);
     if (!firstState) {
       for (const tx of s.log) {
         if (tx.id <= lastSeenTx || tx.actorId === session.playerId || tx.kind === 'start') continue;
         const d = tx.deltas[session.playerId];
         if (d) {
-          toast(`${d > 0 ? '+' : ''}${fmt(d)} · ${tx.text}`, d > 0 ? 'plus' : 'minus');
-          vibrate(d > 0 ? [60, 40, 60] : 200);
+          const show = () => {
+            toast(`${d > 0 ? '+' : ''}${fmt(d)} · ${tx.text}`, d > 0 ? 'plus' : 'minus');
+            vibrate(d > 0 ? [60, 40, 60] : 200);
+          };
+          // 주사위·카드 장면 중이면 장면이 끝난 뒤에 알림
+          if (heldState) heldToasts.push(show);
+          else show();
         }
       }
       if (prevStatus === 'playing' && s.status === 'ended') vibrate([100, 50, 100, 50, 200]);
@@ -254,7 +262,27 @@
   }
 
   // ---------- 화면 공통 ----------
+  const ANIM_KINDS = ['roll', 'orderRoll', 'fortune'];
+  const newAnim = (st) => !!st && st.log.some((tx) => tx.id > anim.seen && ANIM_KINDS.includes(tx.kind) && !tx.undone);
+  const animPending = () => anim.busy || anim.queue.length > 0 || newAnim(state);
+  // 새 상태 받기: 아직 안 보여 준 주사위·카드 장면이 있으면 장면이 끝날 때까지 이전 화면을 유지
+  function adopt(next) {
+    if (state && !heldState && !firstState && newAnim(next) && state.status !== 'lobby') heldState = state;
+    state = next;
+  }
   function render() {
+    if (heldState && !(state && animPending())) {
+      heldState = null;
+      const list = heldToasts;
+      heldToasts = [];
+      list.forEach((f) => f());
+    }
+    if (!heldState || !state) return renderNow();
+    const real = state;
+    state = heldState;
+    try { renderNow(); } finally { state = real; }
+  }
+  function renderNow() {
     if (modalLock && $modal.innerHTML && !(state && modalLock())) closeModal();
     if (teacher && !T.focus) return renderTeacher();
     if (teacher && !state) return renderTeacher();
@@ -495,7 +523,10 @@
     const c = new N.Connection(sess, {
       onState: (st) => {
         entry.state = st;
-        if (T.focus === sess.code) state = serverState = st;
+        if (T.focus === sess.code) {
+          adopt(st);
+          serverState = st;
+        }
         renderSoon();
       },
       onStatus: (st) => { entry.connected = st.connected; },
@@ -791,7 +822,7 @@
     const owner = pr && player(pr.owner);
     return `<button class="tile ${owner ? 'owned' : ''}" data-pos="${t.pos}" ${attr || `data-tile="${t.id}"`} style="--c:${tileColor(t)};${owner ? `--o:${pc(owner)}` : ''}">
       <span class="lbl"><b>${esc(t.name)}</b>
-        ${owner ? '' : `<span class="tp">${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}</span>`}
+        <span class="tp">${owner ? `통행료:${fmt(G.tollInfo(state, t.id).amount)}` : `구입비:${fmt(t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land)}`}</span>
         <span class="tb">${tileBadges(t)}</span>${piecesAt(t.pos)}</span>
       ${quad(t, pr)}
     </button>`;
@@ -1670,18 +1701,18 @@
       <div class="dice"><span id="d1"></span><span id="d2"></span></div><div class="fxsum" id="dsum">&nbsp;</div></div>`;
     const d1 = el.querySelector('#d1');
     const d2 = el.querySelector('#d2');
-    // 3초 동안 숫자가 빠르게 바뀌다가 천천히 멈춤
+    // 1.5초 동안 숫자가 빠르게 바뀌다가 천천히 멈춤
     const start = Date.now();
-    while (Date.now() - start < 3000) {
+    while (Date.now() - start < 1500) {
       d1.innerHTML = dieHtml(r6());
       d2.innerHTML = dieHtml(r6());
-      const k = (Date.now() - start) / 3000;
-      await sleep(50 + k * k * 380);
+      const k = (Date.now() - start) / 1500;
+      await sleep(45 + k * k * 220);
     }
     d1.innerHTML = dieHtml(dice[0]);
     d2.innerHTML = dieHtml(dice[1]);
     el.querySelector('#dsum').textContent = `${dice[0]} + ${dice[1]} = ${dice[0] + dice[1]}${dice[0] === dice[1] ? ' 더블!' : ''}`;
-    await sleep(1100);
+    await sleep(900);
     el.className = '';
   }
 
@@ -1797,6 +1828,37 @@
     for (let g = 0; g < G.GROUPS.length; g++) if (G.hasMonopoly(state, p.id, g)) monos++;
     return { tiles, value, total: p.money + value, monos };
   }
+  // 승리 이유: 독점한 도시를 색깔별로, 파산·시간 종료는 숫자로
+  function winHtml(r, w) {
+    const chip = (t) => `<span class="wtile" style="--c:${tileColor(t)}">${esc(t.name)}<i>${builtIcons(t)}</i></span>`;
+    const row = (label, color, tiles) => `<div class="wrow" style="--c:${color}"><span class="wlabel">${label}</span><span class="wtiles">${tiles.map(chip).join('')}</span></div>`;
+    const mine = (t) => prop(t.id) && prop(t.id).owner === w.id;
+    if (r.reason === '트리플 독점') {
+      const groups = G.GROUPS.map((g, i) => i).filter((g) => G.hasMonopoly(state, w.id, g));
+      return `<div class="wsub">같은 색 도시를 모두 가진 색 ${groups.length}곳</div><div class="wrows">${groups.map((g) =>
+        row(esc(G.GROUPS[g].name), G.GROUPS[g].color, G.BOARD.filter((t) => t.kind === 'city' && t.group === g))).join('')}</div>`;
+    }
+    if (r.reason === '라인 독점') {
+      const l = G.LINE_NAMES.findIndex((_, i) => G.BOARD.filter((t) => t.line === i).every(mine));
+      if (l >= 0) return `<div class="wsub">게임판 한 줄의 도시·관광지를 모두 가짐</div><div class="wrows">${row(`${G.LINE_NAMES[l]}라인`, pc(w), G.BOARD.filter((t) => t.line === l))}</div>`;
+    }
+    if (r.reason === '관광지 독점') {
+      return `<div class="wsub">관광지 5곳을 모두 가짐</div><div class="wrows">${row('관광지', '#2bb3a3', G.BOARD.filter((t) => t.kind === 'tour'))}</div>`;
+    }
+    if (r.reason === '나머지 모두 파산') {
+      const out = state.players.filter((p) => p.bankrupt);
+      return `<div class="wsub">혼자 끝까지 남았어요</div><div class="wout">${out.map((p) => `<span class="wplayer"><span class="dot" style="background:${pc(p)}"></span>${esc(p.name)} ☠️ 파산</span>`).join('')}</div>`;
+    }
+    if (r.reason === '시간 종료') {
+      const x = resultOf(w);
+      return `<div class="wsub">게임이 끝났을 때 총자산이 가장 많아요</div><div class="wstats">
+        <div><small>마블</small><b>${fmt(w.money)}</b></div><span>+</span>
+        <div><small>땅·건물</small><b>${fmt(x.value)}</b></div><span>=</span>
+        <div class="tot"><small>총자산</small><b>${fmt(x.total)}</b></div></div>`;
+    }
+    return r.detail ? `<div class="sub">${esc(r.detail)}</div>` : '';
+  }
+
   function renderEnded() {
     const r = state.result || {};
     const res = Object.fromEntries(state.players.map((p) => [p.id, resultOf(p)]));
@@ -1807,7 +1869,7 @@
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
       <div class="card winner" style="--pc:${pc(w)}"><div class="trophy">🏆</div><h2>${esc(w.name)} 승리!</h2>
         <div class="reason">${esc(r.reason || '')}</div>
-        ${r.detail ? `<div class="sub">${esc(r.detail)}</div>` : ''}</div>
+        ${winHtml(r, w)}</div>
       ${rank.map((p, i) => {
         const x = res[p.id];
         return `<div class="card result" style="--pc:${pc(p)}">

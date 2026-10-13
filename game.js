@@ -1476,7 +1476,8 @@ function applyAction(room, actorId, action) {
 
 // 다른 기기에 보낼 상태 (되돌리기용 스냅샷은 빼고)
 function publicState(room) {
-  return {
+  // 방 안의 객체를 그대로 넘기지 않음 (방장 기기에서 이전 화면 상태가 나중 동작에 바뀌지 않게)
+  return JSON.parse(JSON.stringify({
     code: room.code,
     title: room.title || '',
     hostPlays: room.hostPlays !== false,
@@ -1500,7 +1501,7 @@ function publicState(room) {
     result: room.result,
     timeLimit: room.timeLimit || 0,
     endAt: room.endAt || null,
-  };
+  }));
 }
 
 // 공개 상태로 결과를 미리 계산할 방 (버튼을 누르자마자 내 화면에 먼저 반영하는 용도)
