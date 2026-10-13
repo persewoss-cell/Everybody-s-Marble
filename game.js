@@ -405,6 +405,11 @@ function record(room, actorId, kind, text, deltas, before) {
   return tx;
 }
 
+function tag(tx, info) {
+  tx.info = info;
+  return tx;
+}
+
 function autoWin(room, ...pids) {
   if (room.status !== 'playing') return;
   for (const pid of pids) {
@@ -887,7 +892,8 @@ const actions = {
     for (const p of room.players) if (pos[p.id] !== undefined) p.pos = pos[p.id];
     tx.undone = true;
     if (room.turn) delete room.turn.awaitBlock;
-    record(room, actorId, 'card', `${victim}이(가) 방패·천사 카드로 공격을 막았어요 (${tx.text})`, {});
+    const used = a.card === 'angel' ? '천사' : a.card === 'shield' ? '방패' : '방패·천사';
+    record(room, actorId, 'card', `${victim}이(가) ${used} 카드로 공격을 막았어요 (${tx.text})`, {});
   },
 
   // 무인도 탈출 카드 사용
@@ -1018,7 +1024,7 @@ const actions = {
     const built = {};
     for (const k of items) built[k] = true;
     room.props[tile.id] = { owner: p.id, built, visits: 0 };
-    record(room, actorId, 'buy', `[${tile.name}] ${p.name} ${what} 구매 -${fmt(amount)}`, { [p.id]: -amount }, before);
+    tag(record(room, actorId, 'buy', `[${tile.name}] ${p.name} ${what} 구매 -${fmt(amount)}`, { [p.id]: -amount }, before), { tile: tile.id, items });
     autoWin(room, p.id);
   },
 
@@ -1037,7 +1043,7 @@ const actions = {
     visit(room, tile, prop);
     prop.built = { ...prop.built };
     for (const k of items) prop.built[k] = true;
-    record(room, actorId, 'build', `[${tile.name}] ${p.name} ${items.map((k) => ITEM_NAMES[k]).join('+')} 건설 -${fmt(amount)}`, { [p.id]: -amount }, before);
+    tag(record(room, actorId, 'build', `[${tile.name}] ${p.name} ${items.map((k) => ITEM_NAMES[k]).join('+')} 건설 -${fmt(amount)}`, { [p.id]: -amount }, before), { tile: tile.id, items });
   },
 
   // 내 땅에 도착: 효과 해제, 해변 관광지 단계 올리기
@@ -1048,7 +1054,7 @@ const actions = {
     if (prop.owner !== p.id) throw new GameError('내 땅이 아닙니다.');
     const before = snapshot(room);
     visit(room, tile, prop);
-    record(room, actorId, 'arrive', `[${tile.name}] ${p.name} 도착`, {}, before);
+    tag(record(room, actorId, 'arrive', `[${tile.name}] ${p.name} 도착`, {}, before), { tile: tile.id });
   },
 
   // 다른 사람 땅에 도착 → 통행료 (천사: 면제, 할인쿠폰: 50%). 해변은 지금 단계로 내고 한 단계 올라감
@@ -1087,10 +1093,10 @@ const actions = {
     ensureFunds(p, amount);
     const before = snapshot(room);
     prop.owner = p.id;
-    record(room, actorId, 'takeover', `[${tile.name}] ${p.name}이(가) ${owner.name}의 도시 인수 -${fmt(amount)}`, {
+    tag(record(room, actorId, 'takeover', `[${tile.name}] ${p.name}이(가) ${owner.name}의 도시 인수 -${fmt(amount)}`, {
       [p.id]: -amount,
       [owner.id]: amount,
-    }, before);
+    }, before), { tile: tile.id, from: owner.id });
     autoWin(room, p.id);
   },
 
@@ -1104,7 +1110,7 @@ const actions = {
     const amount = sellPrice(room, tile.id);
     const before = snapshot(room);
     removeProp(room, tile.id);
-    record(room, actorId, 'sell', `[${tile.name}] ${p.name} 매각 +${fmt(amount)}`, { [p.id]: amount }, before);
+    tag(record(room, actorId, 'sell', `[${tile.name}] ${p.name} 매각 +${fmt(amount)}`, { [p.id]: amount }, before), { tile: tile.id });
   },
 
   // 보석금 · 세금 · 세계여행 비용
@@ -1130,7 +1136,7 @@ const actions = {
     ensureFunds(p, OLYMPIC_COST);
     const before = snapshot(room);
     room.olympic = { tileId: tile.id, count: same ? room.olympic.count + 1 : 1 };
-    record(room, actorId, 'olympic', `[${tile.name}] ${p.name} 올림픽 개최 (통행료 ×${room.olympic.count + 1}) -${fmt(OLYMPIC_COST)}`, { [p.id]: -OLYMPIC_COST }, before);
+    tag(record(room, actorId, 'olympic', `[${tile.name}] ${p.name} 올림픽 개최 (통행료 ×${room.olympic.count + 1}) -${fmt(OLYMPIC_COST)}`, { [p.id]: -OLYMPIC_COST }, before), { tile: tile.id, times: room.olympic.count + 1 });
   },
 
   // 보너스 게임: 연속 성공 횟수 0~3
@@ -1184,21 +1190,21 @@ const actions = {
     const before = snapshot(room);
     const hit = BOARD.filter((t) => t.kind === 'city' && t.group === tile.group && room.props[t.id]);
     for (const t of hit) room.effects[t.id] = { ...room.effects[t.id], epidemic: true };
-    record(room, actorId, 'card', `${p.name} 전염병 → ${hit.map((t) => t.name).join(', ')} 통행료 50%`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 전염병 → ${hit.map((t) => t.name).join(', ')} 통행료 50%`, {}, before), { mark: 'epidemic', tiles: hit.map((t) => t.id) });
   },
   dust(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, {});
     if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], dust: true };
-    record(room, actorId, 'card', `${p.name} 황사 → [${tile.name}] 통행료 50%`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 황사 → [${tile.name}] 통행료 50%`, {}, before), { mark: 'dust', tiles: [tile.id] });
   },
   blackout(room, actorId, a) {
     const { p, tile } = attackTarget(room, actorId, a.tileId, {});
     if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], blackout: true };
-    record(room, actorId, 'card', `${p.name} 도시정전 → [${tile.name}] 무료통과`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 도시정전 → [${tile.name}] 무료통과`, {}, before), { mark: 'blackout', tiles: [tile.id] });
   },
   // 지진: 상대 도시의 가장 비싼 건물 하나 파괴
   quake(room, actorId, a) {
@@ -1207,7 +1213,7 @@ const actions = {
     const before = snapshot(room);
     const k = destroyTop(tile, prop);
     if (!k) throw new GameError('파괴할 건물이 없습니다.');
-    record(room, actorId, 'card', `${p.name} 지진 → [${tile.name}] ${ITEM_NAMES[k]} 파괴`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 지진 → [${tile.name}] ${ITEM_NAMES[k]} 파괴`, {}, before), { removed: [[tile.id, k]] });
   },
   // 외계인 침공: 같은 색 도시마다 가장 비싼 건물 하나씩 파괴 (랜드마크 도시 제외)
   alien(room, actorId, a) {
@@ -1215,12 +1221,16 @@ const actions = {
     if (!p) return;
     const before = snapshot(room);
     const done = [];
+    const removed = [];
     for (const t of BOARD.filter((x) => x.kind === 'city' && x.group === tile.group)) {
       const k = destroyTop(t, room.props[t.id]);
-      if (k) done.push(`${t.name} ${ITEM_NAMES[k]}`);
+      if (k) {
+        done.push(`${t.name} ${ITEM_NAMES[k]}`);
+        removed.push([t.id, k]);
+      }
     }
     if (!done.length) throw new GameError('파괴할 건물이 없습니다.');
-    record(room, actorId, 'card', `${p.name} 외계인 침공 → ${done.join(', ')} 파괴`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 외계인 침공 → ${done.join(', ')} 파괴`, {}, before), { removed });
   },
   // 강제매각: 상대 도시를 없애고, 주인은 은행에서 매각비용을 받음
   forceSell(room, actorId, a) {
@@ -1229,7 +1239,7 @@ const actions = {
     const amount = sellPrice(room, tile.id);
     const before = snapshot(room);
     removeProp(room, tile.id);
-    record(room, actorId, 'card', `${p.name} 강제매각 → [${tile.name}] ${owner.name} 매각비용 +${fmt(amount)}`, { [owner.id]: amount }, before);
+    tag(record(room, actorId, 'card', `${p.name} 강제매각 → [${tile.name}] ${owner.name} 매각비용 +${fmt(amount)}`, { [owner.id]: amount }, before), { cleared: [tile.id] });
   },
   // 도시체인지: 상대 도시 하나와 내 도시 하나를 맞교환 (랜드마크 도시 제외)
   swap(room, actorId, a) {
@@ -1241,7 +1251,7 @@ const actions = {
     const before = snapshot(room);
     prop.owner = p.id;
     mine.prop.owner = owner.id;
-    record(room, actorId, 'card', `${p.name} 도시체인지: [${mine.tile.name}] ↔ ${owner.name}의 [${tile.name}]`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 도시체인지: [${mine.tile.name}] ↔ ${owner.name}의 [${tile.name}]`, {}, before), { swap: [tile.id, mine.tile.id], owner: owner.id });
     autoWin(room, p.id, owner.id);
   },
   // 도시기부: 내 도시 하나를 원하는 상대에게 (랜드마크 도시 제외 — 룰북 12쪽)
@@ -1255,7 +1265,7 @@ const actions = {
     if (to.id === p.id) throw new GameError('받을 사람을 골라 주세요.');
     const before = snapshot(room);
     prop.owner = to.id;
-    record(room, actorId, 'card', `${p.name} 도시기부: [${tile.name}] → ${to.name}`, {}, before);
+    tag(record(room, actorId, 'card', `${p.name} 도시기부: [${tile.name}] → ${to.name}`, {}, before), { give: tile.id, to: to.id });
     autoWin(room, to.id);
   },
 
@@ -1273,10 +1283,11 @@ const actions = {
       deltas[to.id] = p.money;
       text += ` — 남은 ${fmt(p.money)}은(는) ${to.name}에게`;
     }
-    for (const id of Object.keys(room.props)) if (room.props[id].owner === p.id) removeProp(room, id);
+    const cleared = Object.keys(room.props).filter((id) => room.props[id].owner === p.id);
+    for (const id of cleared) removeProp(room, id);
     p.bankrupt = true;
     Object.assign(p, { card: null, pendingCard: null, use: null, travel: false, jail: 0 }); // 보관 카드는 모두 버림 (룰북 8쪽)
-    record(room, actorId, 'bankrupt', text, deltas, before);
+    tag(record(room, actorId, 'bankrupt', text, deltas, before), { cleared, who: p.id });
     lastSurvivor(room);
     if (turnsOn(room) && room.phase === 'turns' && room.turn && room.turn.pid === p.id && room.status === 'playing') nextTurn(room);
   },

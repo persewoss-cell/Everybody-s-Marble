@@ -84,7 +84,7 @@
   // 규칙 위반(잔액 부족 등)은 내 기기에서 바로 알려 주고, 방장 기기가 확정하면 그 결과로 맞춤
   function act(action) {
     if (!conn || !state) throw new Error('아직 연결되지 않았습니다.');
-    if (!session.host && action.type !== 'undo') {
+    if (!session.host && action.type !== 'undo' && action.type !== 'blockAttack') {
       const copy = G.roomFromPublic(state);
       G.applyAction(copy, session.playerId, action); // 안 되는 동작이면 여기서 바로 오류
       const next = G.publicState(copy);
@@ -250,6 +250,15 @@
     // 내 동작이 아직 확정 전이면, 그 동작이 들어간 상태가 올 때까지 미리 계산한 화면을 유지
     if (!(pending && s.nextTxId < predictedNext)) adopt(s);
     if (!firstState) {
+      // 앱 + 실물 방: 컴퓨터 차례가 끝나면 실물 게임판에 반영할 일 알려 주기
+      const meP = s.players.find((p) => p.id === session.playerId);
+      if (s.mode !== 'app' && s.withBots && meP && !meP.bot) {
+        for (const tx of s.log) {
+          if (tx.id <= lastSeenTx || tx.undone) continue;
+          const actor = s.players.find((p) => p.id === tx.actorId);
+          if (actor && actor.bot && (tx.kind === 'turn' || tx.kind === 'bankrupt')) botTurnNotice(tx, s);
+        }
+      }
       for (const tx of s.log) {
         if (tx.id <= lastSeenTx || tx.actorId === session.playerId || tx.kind === 'start') continue;
         const d = tx.deltas[session.playerId];
@@ -1502,6 +1511,96 @@
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
   }
+  // 컴퓨터가 한 일 → 실물 게임판에서 할 일
+  function physicalSteps(txs, bot) {
+    const T = (id) => `<b>${esc(G.TILE[id].name)}</b>`;
+    const piece = (G.PIECES.find((c) => c.color === bot.color) || {}).name || '';
+    const who = (id) => esc((player(id) || {}).name || '');
+    const steps = [];
+    for (const tx of txs) {
+      const info = tx.info || {};
+      switch (tx.kind) {
+        case 'roll':
+        case 'fortune':
+          if (tx.kind === 'fortune') steps.push(`🃏 포춘카드 <b>${esc(G.CARD[tx.card].name)}</b>을(를) 뽑았어요 (앱 카드라 실물 카드는 뽑지 않아도 돼요)`);
+          if (tx.to !== undefined && tx.to !== tx.from) steps.push(`🚶 ${esc(bot.name)} 말을 <b>${esc(G.SPACES[tx.to].name)}</b>(으)로 옮겨 주세요`);
+          else if (tx.kind === 'roll' && /무인도/.test(tx.text)) steps.push(`🏝️ ${esc(tx.text)}`);
+          if (/월급/.test(tx.text)) steps.push('💰 출발지를 지나 받은 월급은 앱에 들어갔어요');
+          break;
+        case 'buy': {
+          const t = G.TILE[info.tile];
+          const what = t.kind === 'tour' ? '관광지 깃발' : info.items && info.items.length ? info.items.map((k) => G.ITEM_NAMES[k]).join('·') : '깃발';
+          steps.push(`🚩 ${T(info.tile)}에 ${esc(piece)} ${what}을(를) 올리고, 도시증서를 ${esc(bot.name)} 자리에 놓아 주세요`);
+          break;
+        }
+        case 'build':
+          steps.push(info.items.includes('landmark')
+            ? `🗼 ${T(info.tile)}: 깃발·건물을 치우고 ${esc(piece)} 랜드마크를 올려 주세요`
+            : `🏠 ${T(info.tile)}에 ${esc(piece)} ${info.items.map((k) => G.ITEM_NAMES[k]).join('·')}을(를) 올려 주세요`);
+          break;
+        case 'takeover':
+          steps.push(`🤝 ${T(info.tile)}: ${who(info.from)}의 깃발·건물을 ${esc(piece)}으로 바꾸고, 도시증서를 ${esc(bot.name)}에게 주세요`);
+          break;
+        case 'sell':
+          steps.push(`🏚️ ${T(info.tile)}의 깃발·건물을 모두 치우고 도시증서를 은행에 반납해 주세요`);
+          break;
+        case 'olympic':
+          steps.push(`🏅 ${T(info.tile)}에 올림픽 마크(×${info.times})를 올려 주세요 (다른 도시에 있으면 옮겨 주세요)`);
+          break;
+        case 'arrive':
+          if (G.TILE[info.tile].tour === 'beach') steps.push(`⛱️ ${T(info.tile)} 관광지 건물을 앱 게임판과 같은 단계로 바꿔 주세요`);
+          break;
+        case 'toll':
+        case 'pay':
+        case 'bonus':
+          steps.push(`💸 ${esc(tx.text)} (돈은 앱에서 처리했어요)`);
+          break;
+        case 'card':
+          if (info.mark) {
+            const name = { epidemic: '전염병', dust: '황사', blackout: '도시정전' }[info.mark];
+            steps.push(`🃏 ${info.tiles.map(T).join(', ')}에 ${name} 마크를 올려 주세요`);
+          } else if (info.removed) {
+            for (const [id, k] of info.removed) steps.push(`💥 ${T(id)}의 ${G.ITEM_NAMES[k]}을(를) 치워 주세요 (건물이 다 없어지면 깃발로 표시)`);
+          } else if (info.cleared) {
+            steps.push(`🔨 ${T(info.cleared[0])}의 깃발·건물을 모두 치우고 도시증서를 은행에 반납해 주세요`);
+          } else if (info.swap) {
+            steps.push(`🔄 ${T(info.swap[0])}와(과) ${T(info.swap[1])}의 깃발·건물 색과 도시증서를 서로 바꿔 주세요`);
+          } else if (info.give) {
+            steps.push(`🎁 ${T(info.give)}의 깃발·건물을 ${who(info.to)}의 색으로 바꾸고 도시증서를 ${who(info.to)}에게 주세요`);
+          } else {
+            steps.push(`🃏 ${esc(tx.text)}`);
+          }
+          break;
+        case 'bankrupt':
+          steps.push(`☠️ ${esc(bot.name)} 파산 — 말과 깃발·건물을 모두 치우고 도시증서를 반납해 주세요`);
+          break;
+        default:
+          break;
+      }
+    }
+    return steps;
+  }
+  // 컴퓨터 차례가 끝나면 (앱 + 실물 방의 사람에게) 실물 게임판에 반영할 일을 확인 창으로
+  function botTurnNotice(endTx, st) {
+    const bot = st.players.find((p) => p.id === endTx.actorId);
+    const i = st.log.indexOf(endTx);
+    const txs = [];
+    for (let j = i - (endTx.kind === 'turn' ? 1 : 0); j >= 0; j--) {
+      const tx = st.log[j];
+      if (tx.kind === 'turn' && j !== i) break;
+      if (tx.actorId === bot.id && !tx.undone) txs.unshift(tx);
+    }
+    const steps = physicalSteps(txs, bot);
+    const show = () => {
+      if ($modal.innerHTML || animPending()) return setTimeout(show, 500);
+      openModal(`<h3>🤖 ${esc(bot.name)} 차례가 끝났어요</h3>
+        <div class="sub">컴퓨터 결과를 실제 게임 보드판에 반영해 주세요.</div>
+        ${steps.length ? `<ol class="steps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>` : '<p>실물 게임판에서 할 일은 없어요.</p>'}
+        <button class="btn accent wide" data-close>확인 (반영했어요)</button>`);
+    };
+    setTimeout(show, 300);
+  }
+
   // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기
   let blockAsked = 0;
   function blockPrompt() {
@@ -1511,10 +1610,13 @@
     if (!tx) return;
     blockAsked = w.txId;
     openModal(`<h3>🛡️ 컴퓨터가 공격했어요</h3><p>${esc(tx.text)}</p>
-      <div class="sub">실물 <b>방패</b>나 <b>천사</b> 카드를 가지고 있으면 막을 수 있어요. 막으면 그 카드는 반납하세요.</div>
-      <div class="row"><button class="btn secondary" id="nob">그냥 둘게요</button><button class="btn accent" id="yesb">🛡️ 카드로 막기</button></div>`, (root) => {
-      root.querySelector('#nob').onclick = () => run({ type: 'blockAttack', block: false });
-      root.querySelector('#yesb').onclick = () => run({ type: 'blockAttack', block: true });
+      <div class="sub">실물 방어 카드를 가지고 있으면 막을 수 있어요. 어떤 카드로 막을까요? 막은 카드는 반납하세요.</div>
+      <div class="cards"><button class="fcard gold" data-blk="angel"><b>😇 천사</b><small>공격 방어 (또는 통행료 면제)</small></button>
+        <button class="fcard silver" data-blk="shield"><b>🛡️ 방패</b><small>상대 공격 방어</small></button></div>
+      <div class="err" id="err"></div>
+      <button class="btn secondary wide mt" id="nob">막을 카드가 없어요 · 그냥 둘게요</button>`, (root) => {
+      root.querySelector('#nob').onclick = () => run({ type: 'blockAttack', block: false }, { keepOpen: true });
+      root.querySelectorAll('[data-blk]').forEach((b) => (b.onclick = () => run({ type: 'blockAttack', block: true, card: b.dataset.blk }, { keepOpen: true })));
     }, { lock: () => { const x = state.turn && state.turn.awaitBlock; return !!x && x.txId === w.txId; } });
   }
   function realOrderDialog() {
