@@ -448,10 +448,5 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .wstats .tot { background: color-mix(in srgb, var(--pc) 22%, var(--card)); }
 .wstats > span { font-weight: 800; color: var(--muted); }
 
-/* 컴퓨터가 한 일 (앱 + 실물) */
-.botpanel { border-left: 5px solid #6c8cff; padding: 8px 12px; }
-.botpanel .bphead { font-weight: 800; display: flex; flex-direction: column; gap: 1px; }
-.botpanel .bphead small { font-weight: 500; color: var(--muted); font-size: 12px; }
-.botpanel ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
 .troom .tbot { font-size: 12px; line-height: 12px; }
 .troom .tbots .btn { padding: 3px 4px; }

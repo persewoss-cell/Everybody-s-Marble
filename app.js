@@ -919,7 +919,6 @@
           ${myStatus(m)}
         </div>
         ${turnBar()}
-        ${botPanel()}
         <div class="row ctrl">${m.bankrupt ? '' : `<button class="btn accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
           <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
         ${m.bankrupt ? '' : `<div class="actions app">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
@@ -1499,27 +1498,9 @@
     const note = w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
       : mine && t.again ? '더블! 한 번 더 굴려요'
       : mine ? '실물 주사위로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
-      : cur.bot ? '🤖 컴퓨터가 진행하는 중... (아래 안내대로 실물 게임판에도 옮겨 주세요)' : '';
+      : cur.bot ? '🤖 컴퓨터가 진행하는 중... (기록을 보고 실물 게임판에도 옮겨 주세요)' : '';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
-  }
-  // 컴퓨터가 최근에 한 일 (실물 게임판에도 따라 하도록)
-  function botPanel() {
-    if (!freeTurn() || state.phase !== 'turns') return '';
-    const out = [];
-    for (let i = state.log.length - 1; i >= 0 && out.length < 8; i--) {
-      const tx = state.log[i];
-      const who = state.players.find((p) => p.id === tx.actorId);
-      if (!who || !who.bot) {
-        if (out.length) break;
-        continue;
-      }
-      if (tx.kind !== 'turn' && !tx.undone) out.push(tx);
-    }
-    if (!out.length) return '';
-    const who = player(out[0].actorId);
-    return `<div class="card botpanel"><div class="bphead">🤖 ${esc(who.name)}이(가) 한 일 <small>실물 게임판에도 똑같이 말을 옮기고 깃발·건물을 올려 주세요</small></div>
-      <ul>${out.reverse().map((tx) => `<li>${esc(tx.text)}</li>`).join('')}</ul></div>`;
   }
   // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기
   let blockAsked = 0;
@@ -2125,7 +2106,7 @@
     const full = state.players.length >= 4;
     return `<button class="btn secondary small mt" id="addbot" ${full ? 'disabled' : ''}>🤖 컴퓨터 추가</button>
       <div class="sub">컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.${state.mode === 'app' ? ''
-        : ' 컴퓨터가 있으면 앱이 차례를 관리해요: 주사위로 순서를 정하고, 사람은 실물로 하다가 차례 끝을 누르고, 컴퓨터가 한 일은 화면 안내대로 실물에도 올려 주세요.'}</div>`;
+        : ' 컴퓨터가 있으면 앱이 차례를 관리해요: 주사위로 순서를 정하고, 사람은 실물로 하다가 차례 끝을 누르고, 컴퓨터가 한 일은 기록을 보고 실물에도 올려 주세요.'}</div>`;
   }
   function bindBotButton() {
     const b = $app.querySelector('#addbot');
