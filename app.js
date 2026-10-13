@@ -588,7 +588,10 @@
       <div class="thead"><b class="tname">${esc(title)}</b><span class="tag ${st.status === 'playing' ? 'now' : ''}">${status}</span></div>
       <span class="bigno">${esc(st.code)}</span>
       ${st.status === 'playing' && st.endAt ? `<span class="ttime" data-endat="${st.endAt}">⏰ ${timeLeft(st.endAt)}</span>` : st.status === 'lobby' && st.timeLimit ? `<span class="ttime">⏰ ${st.timeLimit}분</span>` : ''}
-      <div class="tdots">${st.players.map((p) => `<span class="dot ${p.bankrupt ? 'out' : ''}" style="background:${pc(p)}" title="${esc(p.name)}"></span>`).join('') || '<span class="muted">아직 없음</span>'}</div>
+      <div class="tdots">${st.players.map((p) => p.bot && !p.color ? '<span class="tbot" title="컴퓨터">🤖</span>'
+        : `<span class="dot ${p.bankrupt ? 'out' : ''}" style="background:${pc(p)}" title="${esc(p.name)}"></span>`).join('') || '<span class="muted">아직 없음</span>'}</div>
+      ${st.status === 'lobby' ? `<div class="row tbots"><button class="btn small secondary" data-tbot="${st.code}" ${st.players.length >= 4 ? 'disabled' : ''}>🤖 +</button>
+        <button class="btn small secondary" data-tbotx="${st.code}" ${st.players.some((p) => p.bot) ? '' : 'disabled'}>🤖 −</button></div>` : ''}
       <div class="row">${st.status === 'lobby' ? `<button class="btn small accent" data-tstart="${st.code}" ${ready ? '' : 'disabled'}>시작</button>` : ''}
         <button class="btn small secondary" data-topen="${st.code}">열기</button></div>
     </div>`;
@@ -637,6 +640,17 @@
     bindTop();
     $app.querySelectorAll('[data-topen]').forEach((b) => (b.onclick = () => teacherOpen(b.dataset.topen)));
     $app.querySelectorAll('[data-tstart]').forEach((b) => (b.onclick = () => teacherStart([T.rooms[b.dataset.tstart]])));
+    // 방마다 컴퓨터 추가·빼기 (대기 중일 때, 4명까지)
+    const roomAct = (code, action) => {
+      const e = T.rooms[code];
+      if (e && e.conn) e.conn.act(action).catch((err) => toast(`${e.state.title || code}: ${err.message}`, 'err'));
+    };
+    $app.querySelectorAll('[data-tbot]').forEach((b) => (b.onclick = () => roomAct(b.dataset.tbot, { type: 'addBot' })));
+    $app.querySelectorAll('[data-tbotx]').forEach((b) => (b.onclick = () => {
+      const st = T.rooms[b.dataset.tbotx].state;
+      const bots = st.players.filter((p) => p.bot);
+      if (bots.length) roomAct(st.code, { type: 'kick', playerId: bots[bots.length - 1].id });
+    }));
     $app.querySelector('#tall').onclick = () => teacherStart(lobbies);
     $app.querySelector('#ttimer').onclick = () => timerDialog(list);
     $app.querySelector('#tadd').onclick = async () => {
