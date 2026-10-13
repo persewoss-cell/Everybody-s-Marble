@@ -53,6 +53,10 @@
   const readyToStart = (st) => st.players.length >= 2 && st.players.every((p) => p.color || p.bot);
   const BOT_TAG = '<span class="tag bot">🤖 컴퓨터</span>';
   const appMode = () => !!state && state.mode === 'app';
+  // 차례를 관리하는 방 (앱으로만, 또는 컴퓨터가 함께하는 앱 + 실물 방)
+  const turnsOn = () => !!state && (state.mode === 'app' || !!state.withBots);
+  // 실물로 자유롭게 하는 차례 (컴퓨터가 함께하는 앱 + 실물 방의 사람)
+  const freeTurn = () => !!state && state.mode !== 'app' && !!state.withBots;
   // 앱으로만 하는 방: 지금 내 차례면 차례 정보, 아니면 null
   const myTurn = () => {
     const t = state && state.turn;
@@ -135,10 +139,11 @@
   }
   function askEndTurn(tries, title) {
     endTimer = null;
-    if (tries > 150 || !state || state.mode !== 'app' || state.phase !== 'turns' || state.status !== 'playing') return;
+    if (tries > 150 || !state || !turnsOn() || state.phase !== 'turns' || state.status !== 'playing') return;
     const t = state.turn;
     const m = me();
-    if (!m || !t || t.pid !== m.id || !t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled)) return;
+    if (!m || !t || t.pid !== m.id) return;
+    if (!freeTurn() && (!t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled))) return;
     if (t.owe || t.mustDraw || m.use) return; // 통행료·세금·포춘카드가 남았으면 차례 표시줄 버튼으로
     if ($modal.querySelector('#endask')) return;
     if ($modal.innerHTML || anim.busy || anim.queue.length) {
@@ -895,6 +900,7 @@
           ${myStatus(m)}
         </div>
         ${turnBar()}
+        ${botPanel()}
         <div class="row ctrl">${m.bankrupt ? '' : `<button class="btn accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
           <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
         ${m.bankrupt ? '' : `<div class="actions app">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
@@ -935,6 +941,7 @@
     if (q('#dice')) q('#dice').onclick = () => rollDice();
     bindTurnBar();
     if (m.pendingCard && !$modal.innerHTML) keepPrompt();
+    if (!m.bankrupt) blockPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -1364,15 +1371,16 @@
   function canRoll() {
     const m = me();
     if (!m || m.bankrupt || state.status !== 'playing') return false;
+    if (turnsOn() && state.phase === 'order') return state.orderRolls[m.id] === null;
+    if (freeTurn()) return !!state.turn && state.turn.pid === m.id; // 앱 주사위도 쓸 수 있음 (자기 차례에)
     if (state.mode !== 'app') return true;
-    if (state.phase === 'order') return state.orderRolls[m.id] === null;
     const t = state.turn;
     return !!t && t.pid === m.id && (!t.rolled || t.again)
       && !t.owe && !t.mustDraw && !m.use && !m.pendingCard;
   }
   function diceLabel() {
     const m = me();
-    if (state.mode === 'app' && state.phase === 'order') return '주사위 굴려 순서 정하기';
+    if (turnsOn() && state.phase === 'order') return '주사위 굴려 순서 정하기';
     if (m.jail > 0 && state.mode === 'app') return '주사위 (더블이면 탈출)';
     if (state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL) return '여행 안 하고 주사위';
     if (state.turn && state.turn.again && state.turn.pid === m.id) return '한 번 더!';
@@ -1381,7 +1389,7 @@
   function rollDice(noAsk) {
     if (!canRoll() || anim.busy) return;
     const dice = [r6(), r6()];
-    if (state.mode === 'app' && state.phase === 'order') return run({ type: 'orderRoll', dice });
+    if (turnsOn() && state.phase === 'order') return run({ type: 'orderRoll', dice });
     const go = () => {
       autoNext = true;
       run({ type: 'roll', dice });
@@ -1411,9 +1419,12 @@
 
   // 앱으로만 하는 방: 순서 정하기 / 지금 차례
   function turnBar() {
-    if (state.mode !== 'app' || state.status !== 'playing') return '';
+    if (!turnsOn() || state.status !== 'playing') return '';
     if (state.phase === 'order') {
-      return `<div class="card turnbar"><b>🎲 순서 정하기</b><span class="muted">주사위를 굴려 높은 사람부터 시작해요</span>
+      const m = me();
+      const real = freeTurn() && m && !m.bankrupt && state.orderRolls[m.id] === null;
+      return `<div class="card turnbar"><b>🎲 순서 정하기</b><span class="muted">주사위를 굴려 높은 사람부터 시작해요${freeTurn() ? ' (실물 주사위를 굴렸다면 숫자 입력)' : ''}</span>
+        ${real ? '<button class="btn small secondary" id="realorder">🎲 실물 주사위 숫자 입력</button>' : ''}
         <span class="grow"></span>${state.players.map((p) => {
           const sc = state.orderScore[p.id] || [];
           const wait = state.orderRolls[p.id] === null;
@@ -1425,6 +1436,7 @@
     const cur = player(t.pid);
     const mine = t.pid === session.playerId;
     const m = me();
+    if (freeTurn()) return freeTurnBar(t, cur, mine);
     const btns = [];
     // 세계여행은 도착한 다음 차례(주사위 전), 또는 더블로 도착한 그 차례에 떠날 수 있음
     const travelNow = mine && G.canTravelNow(state, m);
@@ -1459,8 +1471,61 @@
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
   }
+  // 컴퓨터가 함께하는 앱 + 실물 방: 사람은 실물로 자유롭게, 다 하면 '차례 끝'
+  function freeTurnBar(t, cur, mine) {
+    const w = t.awaitBlock;
+    const btns = [];
+    if (mine) btns.push('<button class="btn small accent" id="tend">차례 끝</button>');
+    else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
+    const note = w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
+      : mine ? '실물 주사위로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
+      : cur.bot ? '🤖 컴퓨터가 진행하는 중... (아래 안내대로 실물 게임판에도 옮겨 주세요)' : '';
+    return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
+      <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
+  }
+  // 컴퓨터가 최근에 한 일 (실물 게임판에도 따라 하도록)
+  function botPanel() {
+    if (!freeTurn() || state.phase !== 'turns') return '';
+    const out = [];
+    for (let i = state.log.length - 1; i >= 0 && out.length < 8; i--) {
+      const tx = state.log[i];
+      const who = state.players.find((p) => p.id === tx.actorId);
+      if (!who || !who.bot) {
+        if (out.length) break;
+        continue;
+      }
+      if (tx.kind !== 'turn' && !tx.undone) out.push(tx);
+    }
+    if (!out.length) return '';
+    const who = player(out[0].actorId);
+    return `<div class="card botpanel"><div class="bphead">🤖 ${esc(who.name)}이(가) 한 일 <small>실물 게임판에도 똑같이 말을 옮기고 깃발·건물을 올려 주세요</small></div>
+      <ul>${out.reverse().map((tx) => `<li>${esc(tx.text)}</li>`).join('')}</ul></div>`;
+  }
+  // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기
+  let blockAsked = 0;
+  function blockPrompt() {
+    const w = state.turn && state.turn.awaitBlock;
+    if (!w || w.victim !== session.playerId || blockAsked === w.txId || anim.busy) return;
+    const tx = state.log.find((x) => x.id === w.txId);
+    if (!tx) return;
+    blockAsked = w.txId;
+    openModal(`<h3>🛡️ 컴퓨터가 공격했어요</h3><p>${esc(tx.text)}</p>
+      <div class="sub">실물 <b>방패</b>나 <b>천사</b> 카드를 가지고 있으면 막을 수 있어요. 막으면 그 카드는 반납하세요.</div>
+      <div class="row"><button class="btn secondary" id="nob">그냥 둘게요</button><button class="btn accent" id="yesb">🛡️ 카드로 막기</button></div>`, (root) => {
+      root.querySelector('#nob').onclick = () => run({ type: 'blockAttack', block: false });
+      root.querySelector('#yesb').onclick = () => run({ type: 'blockAttack', block: true });
+    }, { lock: () => { const x = state.turn && state.turn.awaitBlock; return !!x && x.txId === w.txId; } });
+  }
+  function realOrderDialog() {
+    openModal(`<h3>🎲 실물 주사위 두 개의 합</h3><div class="chips big">${[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => `<button class="chip" data-sum="${n}">${n}</button>`).join('')}</div>
+      <button class="btn secondary wide" data-close>취소</button>`, (root) => {
+      root.querySelectorAll('[data-sum]').forEach((b) => (b.onclick = () => run({ type: 'orderRoll', sum: Number(b.dataset.sum) })));
+    });
+  }
+
   function bindTurnBar() {
     const q = (x) => $app.querySelector(x);
+    if (q('#realorder')) q('#realorder').onclick = realOrderDialog;
     if (q('#tend')) {
       q('#tend').onclick = () => (myTurn() || !isHost() ? run({ type: 'endTurn' })
         : confirmBox(`${player(state.turn.pid).name}님 차례를 넘길까요?\n(남은 통행료·세금·카드는 없던 일이 돼요)`, { type: 'endTurn' }, '넘기기'));
@@ -2036,10 +2101,11 @@
 
   // ---------- 컴퓨터 플레이어 (앱으로만 하는 방) ----------
   function botButton(host) {
-    if (!host || state.mode !== 'app') return '';
+    if (!host) return '';
     const full = state.players.length >= 4;
     return `<button class="btn secondary small mt" id="addbot" ${full ? 'disabled' : ''}>🤖 컴퓨터 추가</button>
-      <div class="sub">컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.</div>`;
+      <div class="sub">컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.${state.mode === 'app' ? ''
+        : ' 컴퓨터가 있으면 앱이 차례를 관리해요: 주사위로 순서를 정하고, 사람은 실물로 하다가 차례 끝을 누르고, 컴퓨터가 한 일은 화면 안내대로 실물에도 올려 주세요.'}</div>`;
   }
   function bindBotButton() {
     const b = $app.querySelector('#addbot');
@@ -2053,7 +2119,7 @@
     const hosted = teacher ? Object.values(T.rooms) : session && session.host && conn ? [{ state: serverState || state, conn }] : [];
     for (const e of hosted) {
       const st = e.state;
-      if (!st || !e.conn || st.mode !== 'app' || st.status !== 'playing') continue;
+      if (!st || !e.conn || (st.mode !== 'app' && !st.withBots) || st.status !== 'playing') continue;
       if ((botWait[st.code] || 0) > Date.now()) continue;
       for (const p of st.players) {
         if (!p.bot || p.bankrupt) continue;

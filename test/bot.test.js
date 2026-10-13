@@ -46,7 +46,7 @@ test('컴퓨터끼리 게임: 멈추지 않고, 규칙 오류 없이 진행', ()
   assert.ok(s.ended >= 30, `끝난 게임 ${s.ended}/40`);
 });
 
-test('컴퓨터 추가는 앱으로만 하는 방의 방장만, 시작하면 남은 색', () => {
+test('컴퓨터 추가는 방장만, 시작하면 남은 색', () => {
   const room = g.createRoom('1', '엄마', 'a', 'app');
   g.addPlayer(room, '아빠', 'b');
   assert.throws(() => g.applyAction(room, 'b', { type: 'addBot' }), /방장/);
@@ -56,8 +56,39 @@ test('컴퓨터 추가는 앱으로만 하는 방의 방장만, 시작하면 남
   g.applyAction(room, 'b', { type: 'pickColor', color: g.PIECES[1].color });
   g.applyAction(room, 'a', { type: 'start' });
   assert.strictEqual(room.players[2].color, g.PIECES[2].color);
-  const mixed = g.createRoom('2', '엄마', 'a', 'mixed');
-  assert.throws(() => g.applyAction(mixed, 'a', { type: 'addBot' }), /앱으로만/);
+});
+
+test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람은 자기 차례에만 거래, 컴퓨터 공격은 실물 방패로 막기', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.addPlayer(room, '아빠', 'b');
+  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
+  g.applyAction(room, 'b', { type: 'pickColor', color: g.PIECES[1].color });
+  g.applyAction(room, 'a', { type: 'start' });
+  assert.strictEqual(room.withBots, true);
+  assert.strictEqual(room.phase, 'order');
+  const c = room.players[2];
+  g.applyAction(room, 'a', { type: 'orderRoll', sum: 12 });
+  g.applyAction(room, 'b', { type: 'orderRoll', dice: [1, 2] });
+  g.applyAction(room, c.id, { type: 'orderRoll', dice: [3, 3] });
+  assert.deepStrictEqual(room.order, ['a', c.id, 'b']);
+  const id = (n) => g.BOARD.find((t) => t.name === n).id;
+  // 엄마 차례: 실물로 자유롭게, 아빠는 기다림
+  assert.throws(() => g.applyAction(room, 'b', { type: 'buy', tileId: id('도쿄') }), /엄마님 차례/);
+  g.applyAction(room, 'a', { type: 'buy', tileId: id('도쿄'), items: ['villa'] });
+  g.applyAction(room, 'a', { type: 'endTurn' }); // 굴리지 않아도 끝낼 수 있음
+  assert.strictEqual(room.turn.pid, c.id);
+  // 컴퓨터가 엄마 도쿄를 지진으로 공격 → 엄마가 막을지 고를 때까지 기다림
+  c.use = 'quake';
+  g.applyAction(room, c.id, { type: 'quake', tileId: id('도쿄') });
+  assert.ok(!room.props[id('도쿄')].built.villa);
+  assert.deepStrictEqual(room.turn.awaitBlock.victim, 'a');
+  assert.strictEqual(bot.next(g.publicState(room), c.id), null);
+  assert.throws(() => g.applyAction(room, 'b', { type: 'blockAttack', block: true }), /막을 공격/);
+  g.applyAction(room, 'a', { type: 'blockAttack', block: true });
+  assert.ok(room.props[id('도쿄')].built.villa);
+  assert.ok(!room.turn.awaitBlock);
+  assert.ok(bot.next(g.publicState(room), c.id));
 });
 
 // 컴퓨터 차례로 만들고 그 칸에 도착한 상태
