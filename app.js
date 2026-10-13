@@ -106,6 +106,7 @@
   // 버튼 동작 실행: 미리 계산이 되면 창을 바로 닫고, 결과는 뒤에서 확정
   function run(action, opts) {
     const o = opts || {};
+    const fromTx = state ? state.nextTxId : 0;
     let p;
     try {
       p = act(action);
@@ -114,6 +115,7 @@
       return false;
     }
     if (!o.keepOpen) closeModal();
+    salaryNotice(fromTx);
     p.catch((e) => handleError(e, action, o));
     if (!NO_END_ASK.includes(action.type)) scheduleEnd();
     return true;
@@ -942,17 +944,48 @@
     </table>`;
   }
 
-  function buildChecks(t, pr) {
+  // 앱 + 실물: 이 칸이 지금 말 위치보다 앞(번호가 작음)이면 출발지를 지나온 것 → 거래할 때 월급 자동, 턴 +1
+  function passesStart(t) {
     const m = me();
+    return !appMode() && t.pos !== G.POS.start && t.pos < (m.pos || 0);
+  }
+  // 이 칸에서 거래할 때의 내 턴 (출발지를 지나왔으면 하나 더)
+  const turnAt = (t) => { const m = me(); return passesStart(t) ? { ...m, laps: m.laps + 1 } : m; };
+
+  function buildChecks(t, pr) {
+    const m = turnAt(t);
     const built = (pr && pr.built) || {};
-    const ready = built.villa && built.building && built.hotel;
-    const list = (pr ? G.BUILDINGS : ['villa', 'building', 'hotel']).filter((k) => !built[k]);
+    const list = G.BUILDINGS.filter((k) => !built[k]);
     if (!list.length) return '';
     return `<div class="checks">${list.map((k) => {
-      const why = !G.canBuild(m, k) ? `${G.BUILDINGS.indexOf(k) + 1}번째 턴부터` : k === 'landmark' && !ready ? '빌라·빌딩·호텔 필요' : '';
-      return `<label class="check ${why ? 'off' : ''}"><input type="checkbox" data-item="${k}" ${why ? 'disabled' : ''}>
-        ${ICON[k]} ${G.ITEM_NAMES[k]} <span class="muted">${fmt(t.cost[k])}</span>${why ? `<small>${why}</small>` : ''}</label>`;
+      const why = !G.canBuild(m, k) ? `${G.BUILDINGS.indexOf(k) + 1}번째 턴부터` : '';
+      return `<label class="check ${why ? 'off' : ''}"><input type="checkbox" data-item="${k}" ${why ? 'disabled data-turn="1"' : ''}>
+        ${ICON[k]} ${G.ITEM_NAMES[k]} <span class="muted">${fmt(t.cost[k])}</span><small>${why}</small></label>`;
     }).join('')}</div>`;
+  }
+  // 랜드마크 체크: 빌라·빌딩·호텔이 모두 있거나 이번에 체크했을 때만 켜짐 (하나라도 빠지면 꺼지고 체크도 풀림)
+  function syncLandmark(root, pr) {
+    const lm = root.querySelector('[data-item="landmark"]');
+    if (!lm || lm.dataset.turn) return;
+    const built = (pr && pr.built) || {};
+    const has = (k) => built[k] || !!root.querySelector(`[data-item="${k}"]:checked`);
+    const ok = has('villa') && has('building') && has('hotel');
+    lm.disabled = !ok;
+    if (!ok) lm.checked = false;
+    const label = lm.closest('.check');
+    label.classList.toggle('off', !ok);
+    label.querySelector('small').textContent = ok ? '' : '빌라·빌딩·호텔 필요';
+  }
+  // 출발지를 지나 받은 월급 알림 (확인 버튼). 열린 창이 닫히면 띄움
+  function salaryNotice(fromTx) {
+    const tx = state && state.log.find((x) => x.id >= fromTx && x.auto && x.actorId === session.playerId && !x.undone);
+    if (!tx) return;
+    const show = () => {
+      if ($modal.innerHTML) return setTimeout(show, 400);
+      const m = me();
+      notice('🏁 출발지를 지나왔어요', `월급 ${fmt(G.SALARY)} 마블을 받았어요. 이제 ${m.laps + 1}번째 턴이에요 (${G.ITEM_NAMES[G.maxBuilding(m)]}까지 건설).`);
+    };
+    setTimeout(show, 50);
   }
   const checked = (root) => [...root.querySelectorAll('[data-item]:checked')].map((c) => c.dataset.item);
 
@@ -965,7 +998,8 @@
     const head = `<h3><span class="dot" style="background:${tileColor(t)}"></span> ${esc(t.name)}
       <small>${t.kind === 'tour' ? (t.tour === 'island' ? '섬 관광지' : '해변 관광지') : G.GROUPS[t.group].name + ' 도시'} ${tileBadges(t)}</small></h3>
       <div class="sub sheethead">${owner ? `주인 <b>${esc(owner.name)}</b> ${builtIcons(t)}` : '주인 없음'}
-        ${appMode() ? '' : `<button class="btn small secondary" data-move="${t.pos}">📍 내 말 여기로</button>`}</div>`;
+        ${appMode() ? '' : `<button class="btn small secondary" data-move="${t.pos}">📍 내 말 여기로</button>`}</div>
+      ${passesStart(t) && !m.bankrupt ? `<div class="sub passnote">🏁 출발지를 지나왔다면 여기서 거래할 때 월급 ${fmt(G.SALARY)}이 자동으로 들어오고 ${m.laps + 2}번째 턴이 돼요.</div>` : ''}`;
     // 앱으로만 하는 방: 말이 도착한 칸에서만 사고·짓고·낼 수 있음 (다른 칸은 정보만)
     const app = appMode();
     const tt = myTurn();
@@ -982,7 +1016,8 @@
         if (!here) return;
         const total = () => (t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land + checked(root).reduce((s, k) => s + t.cost[k], 0));
         const upd = () => (root.querySelector('#pv').textContent = fmt(total()));
-        root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = upd));
+        root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = () => { syncLandmark(root, null); upd(); }));
+        syncLandmark(root, null);
         upd();
         root.querySelector('#buy').onclick = () => run({ type: 'buy', tileId: t.id, items: checked(root) });
       });
@@ -1007,7 +1042,8 @@
           ${canArrive ? `<button class="btn ${t.kind === 'tour' ? 'accent' : 'secondary'}" id="arrive">${t.tour === 'beach' ? '⛱️ 도착 · 방문 +1' : '도착 (효과 해제)'}</button>` : ''}
           ${checks ? '<button class="btn accent" id="build">건설 <span id="pv"></span></button>' : ''}</div>`, (root) => {
         const upd = () => { const el = root.querySelector('#pv'); if (el) el.textContent = fmt(checked(root).reduce((s, k) => s + t.cost[k], 0)); };
-        root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = upd));
+        root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = () => { syncLandmark(root, pr); upd(); }));
+        syncLandmark(root, pr);
         upd();
         if (root.querySelector('#build')) root.querySelector('#build').onclick = () => {
           if (!checked(root).length) return (root.querySelector('#err').textContent = '지을 건물을 골라 주세요.');
@@ -1195,7 +1231,7 @@
       ['강제징수', 'bronze', '국세청으로 이동해 세금 20만', () => ACTIONS.tax()],
       ['도시기부', 'bronze', '내 도시 하나를 상대에게 (랜드마크 제외)', () => donateDialog()],
       ['올림픽 관광', 'bronze', '올림픽 개최지로 이동해 통행료', () => (state.olympic ? tileSheet(state.olympic.tileId) : toast('올림픽 개최지가 없어 패스예요.'))],
-      ['무인도 탐험', 'bronze', '무인도로 즉시 이동 (월급 없음)', () => moveTo(G.POS.island, '무인도로 옮겼어요.')],
+      ['무인도 탐험', 'bronze', '무인도로 즉시 이동 (월급 없음)', () => moveTo(G.POS.island, '무인도로 옮겼어요. (출발지를 지나도 월급 없음)', { noSalary: true })],
     ]],
     ['공격', [
       ['도시체인지', 'gold', '상대 도시와 내 도시 맞교환', () => swapDialog()],
@@ -1214,8 +1250,8 @@
     ]],
   ];
 
-  function moveTo(pos, msg) {
-    if (run({ type: 'move', to: pos })) toast(msg);
+  function moveTo(pos, msg, extra) {
+    if (run({ type: 'move', to: pos, ...(extra || {}) })) toast(msg);
   }
 
   function fortuneDialog() {
@@ -1870,7 +1906,7 @@
     openModal(`<h3>📖 규칙 요약 (메가 디럭스 룰북)</h3><div class="rules">
       <b>준비</b> 모두 200만 마블. 축제도시 3곳(통행료 ×2)은 앱이 무작위로 정해요.<br>
       <b>월급</b> 출발지를 지날 때마다 30만. 출발지를 지날 때마다 다음 턴.<br>
-      <b>건설 턴 제한</b> 첫 턴 빌라까지 → 두 번째 빌딩까지 → 세 번째 호텔까지 → 그 뒤 자유. 랜드마크는 빌라·빌딩·호텔이 다 있는 내 도시에 도착했을 때.<br>
+      <b>건설 턴 제한</b> 첫 턴 빌라까지 → 두 번째 빌딩까지 → 세 번째 호텔까지 → 그 뒤 자유. 랜드마크는 빌라·빌딩·호텔이 다 있으면(함께 지어도 됨) 네 번째 턴부터. 앱 + 실물 방은 출발지를 지나 도착한 칸에서 거래하면 월급과 턴이 자동으로 올라가요.<br>
       <b>통행료</b> 건설된 건물의 통행료 합. 컬러독점 ×2, 축제 ×2, 올림픽 ×2~×5가 겹쳐서 적용.<br>
       <b>관광지</b> 구매 10만. 섬(독도·하와이·푸켓)은 가진 섬 개수, 해변(발리·타히티)은 방문 횟수로 깃발 8만 → 파라솔 16만 → 방갈로 32만. 매각 5만, 인수 불가.<br>
       <b>인수</b> 통행료를 낸 뒤 인수비용(건설비용 2배)을 주인에게. 관광지·랜드마크 도시는 불가.<br>

@@ -451,7 +451,8 @@ function pickBuildings(player, tile, prop, items) {
   }
   if (list.includes('landmark')) {
     const b = prop ? prop.built : {};
-    if (!(b.villa && b.building && b.hotel)) throw new GameError('랜드마크는 빌라·빌딩·호텔이 모두 세워진 내 도시에 도착했을 때 지을 수 있습니다.');
+    const has = (k) => b[k] || list.includes(k);
+    if (!(has('villa') && has('building') && has('hotel'))) throw new GameError('랜드마크는 빌라·빌딩·호텔이 모두 있어야(함께 지어도 됨) 지을 수 있습니다.');
   }
   return BUILDINGS.filter((k) => list.includes(k));
 }
@@ -941,6 +942,7 @@ const actions = {
     const before = snapshot(room);
     const amt = a.booster ? SALARY * 2 : SALARY;
     p.laps++;
+    if (!appMode(room) && !Number.isInteger(a.at)) p.pos = POS.start;
     record(room, actorId, 'salary', `${p.name} 월급 +${fmt(amt)}${a.booster ? ' (월급 부스터)' : ''} · ${p.laps + 1}번째 턴`, { [p.id]: amt }, before);
   },
 
@@ -1426,6 +1428,16 @@ function afterRules(room, p, a) {
   }
 }
 
+// 앱 + 실물: 말이 이번 칸으로 오면서 출발지를 지났는지 (말은 시계방향으로만 감)
+// 지났으면 월급을 자동으로 주고 턴을 올림 (월급 버튼·출발지 칸·무인도 탐험은 제외)
+function passedStart(room, me, action) {
+  if (appMode(room) || !me || me.bankrupt || room.status !== 'playing') return false;
+  if (action.type === 'salary' || (action.type === 'move' && action.noSalary)) return false;
+  const to = action.type === 'move' ? toInt(action.to, '칸') : whereAt(action);
+  if (to === null || to === undefined || to === POS.start) return false;
+  return to < (me.pos || 0);
+}
+
 function applyAction(room, actorId, action) {
   if (!action || typeof action.type !== 'string' || !Object.prototype.hasOwnProperty.call(actions, action.type)) {
     throw new GameError('알 수 없는 동작입니다.');
@@ -1437,7 +1449,24 @@ function applyAction(room, actorId, action) {
   }
   const app = appMode(room);
   if (app && me && actorId !== room.hostId) checkRules(room, me, action);
-  actions[action.type](room, actorId, action);
+  let saved = null;
+  if (passedStart(room, me, action)) {
+    // 동작이 안 되면(돈 부족 등) 월급도 없던 일로
+    saved = JSON.parse(JSON.stringify(room));
+    const before = snapshot(room);
+    me.laps++;
+    const tx = record(room, actorId, 'salary', `${me.name} 출발지 통과 월급 +${fmt(SALARY)} (자동) · ${me.laps + 1}번째 턴`, { [me.id]: SALARY }, before);
+    tx.auto = true;
+  }
+  try {
+    actions[action.type](room, actorId, action);
+  } catch (e) {
+    if (saved) {
+      for (const k of Object.keys(room)) delete room[k];
+      Object.assign(room, saved);
+    }
+    throw e;
+  }
   if (app && me) afterRules(room, me, action);
   // 칸에서 한 거래면 내 말을 그 칸으로 옮김 (앱으로만 하는 방은 말 위치를 앱이 관리)
   const at = whereAt(action);

@@ -421,3 +421,4 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .minput { flex: 1; min-width: 0; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 15px; }
 .troom .ttime { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 13px; }
 .tag.bot { background: #dfe7ff; color: #1b2236; }
+.passnote { background: #fff4c2; color: #1b2236; border-radius: 8px; padding: 6px 10px; margin: 4px 0; }

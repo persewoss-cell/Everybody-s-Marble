@@ -546,3 +546,41 @@ test('파산하면 보관 카드도 버림', () => {
   act(room, 'b', 'bankrupt');
   assert.strictEqual(room.players[1].card, null);
 });
+
+test('앱 + 실물: 출발지를 지나 도착한 칸에서 거래하면 월급 자동, 턴도 올라감', () => {
+  const room = setup();
+  act(room, 'a', 'buy', { tileId: id('두바이') });
+  act(room, 'a', 'buy', { tileId: id('퀘벡') });
+  act(room, 'a', 'buy', { tileId: id('타히티') });
+  assert.strictEqual(room.players[0].laps, 0);
+  // 방콕(1)은 타히티(25)보다 앞 → 출발지를 지났음: 월급 +30만, 2번째 턴이라 빌딩까지
+  act(room, 'a', 'buy', { tileId: id('방콕'), items: ['villa', 'building'] });
+  assert.strictEqual(room.players[0].laps, 1);
+  const auto = room.log.find((t) => t.auto);
+  assert.ok(auto && /자동/.test(auto.text));
+  // 돈이 모자라 거래가 안 되면 월급도 없던 일
+  room.players[1].pos = 30;
+  room.players[1].money = 1 * M;
+  assert.throws(() => act(room, 'b', 'buy', { tileId: id('런던'), items: ['villa', 'building'] }), /부족/); // 월급 30만을 받아도 46만이 안 됨
+  assert.strictEqual(room.players[1].laps, 0);
+  assert.strictEqual(money(room, 'b'), 1 * M);
+  // 월급 버튼을 누르면 출발지로 본 것 → 같은 바퀴에 두 번 안 줌
+  room.players[1].money = 200 * M;
+  act(room, 'b', 'salary');
+  act(room, 'b', 'buy', { tileId: id('독도') });
+  assert.strictEqual(room.players[1].laps, 1);
+  // 무인도 탐험은 출발지를 지나도 월급 없음
+  room.players[1].pos = 28;
+  act(room, 'b', 'move', { to: 8, noSalary: true });
+  assert.strictEqual(room.players[1].laps, 1);
+});
+
+test('랜드마크: 4번째 턴부터 빌라·빌딩·호텔과 함께 한 번에 지을 수 있음', () => {
+  const room = setup();
+  room.players[0].laps = 3;
+  act(room, 'a', 'buy', { tileId: id('서울'), items: ['villa', 'building', 'hotel', 'landmark'] });
+  assert.ok(room.props[id('서울')].built.landmark);
+  assert.throws(() => act(room, 'a', 'buy', { tileId: id('뉴욕'), items: ['villa', 'landmark'] }), /빌라·빌딩·호텔/);
+  room.players[1].laps = 2;
+  assert.throws(() => act(room, 'b', 'buy', { tileId: id('뉴욕'), items: ['villa', 'building', 'hotel', 'landmark'] }), /3번째 턴/);
+});

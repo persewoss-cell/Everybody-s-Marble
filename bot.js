@@ -126,8 +126,7 @@ function buildPlan(st, p, t, budget, buying) {
     cost += t.cost[k];
     built[k] = true;
   }
-  if (!buying && pr && built.villa && built.building && built.hotel && !built.landmark && G.canBuild(p, 'landmark')
-    && ['villa', 'building', 'hotel'].every((k) => pr.built[k]) && cost + t.cost.landmark <= budget) {
+  if (built.villa && built.building && built.hotel && !built.landmark && G.canBuild(p, 'landmark') && cost + t.cost.landmark <= budget) {
     items.push('landmark');
     cost += t.cost.landmark;
   }
