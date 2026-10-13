@@ -142,3 +142,20 @@ test('컴퓨터: 돈이 적으면 땅·건물을 사지 않고, 짓더라도 최
   const cost = t.cost.land + s.action.items.reduce((sum, k) => sum + t.cost[k], 0);
   assert.ok(200 * g.MAN - cost >= 20 * g.MAN, `남은 돈 ${(200 * g.MAN - cost) / g.MAN}만`);
 });
+
+test('앱 + 실물 + 컴퓨터: 사람이 앱 주사위로 더블이면 차례를 못 끝내고 한 번 더', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
+  g.applyAction(room, 'a', { type: 'start' });
+  g.applyAction(room, 'a', { type: 'orderRoll', dice: [6, 6] });
+  g.applyAction(room, room.players[1].id, { type: 'orderRoll', dice: [1, 2] });
+  assert.strictEqual(room.turn.pid, 'a');
+  room.hostId = 'x'; // 방장 권한 없이 확인
+  g.applyAction(room, 'a', { type: 'roll', dice: [2, 2] });
+  assert.strictEqual(room.turn.again, true);
+  assert.throws(() => g.applyAction(room, 'a', { type: 'endTurn' }), /더블/);
+  g.applyAction(room, 'a', { type: 'roll', dice: [1, 2] });
+  g.applyAction(room, 'a', { type: 'endTurn' });
+  assert.strictEqual(room.turn.pid, room.players[1].id);
+});

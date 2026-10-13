@@ -12,7 +12,7 @@ const G = typeof module !== 'undefined' && module.exports ? require('./game.js')
 const MAN = G.MAN;
 // 비상금 계산 기준 (컴퓨터끼리 수백 판을 두어 맞춘 값)
 // (예전 컴퓨터와 800판씩 두어 이 값이 약 59% 승률로 가장 좋았음: 땅은 적극적으로, 건물은 비상금을 남기며)
-const CFG = { base: 10, near: 0.3, board: 0.2, expect: 1, land: 0.3, build: 0.4, take: 1.2, floorLand: 10, floorBuild: 20 };
+const CFG = { base: 10, near: 0.3, board: 0.2, expect: 1, land: 0.3, build: 0.4, take: 1.2, floorLand: 10, floorBuild: 20, rich: 60, richK: 1.5 };
 const done = new Set(); // 이번 도착에서 이미 생각해 본 일 (같은 칸에서 되풀이하지 않게)
 
 const d6 = () => 1 + Math.floor(Math.random() * 6);
@@ -335,7 +335,9 @@ function next(st, pid) {
       const win = winsWith(st, pid, at);
       const value = progressValue(st, pid, at) + blockValue(st, pid, at) + (owner && G.hasMonopoly(st, owner.id, at.group) ? 1.5 : 0);
       const need = win ? 0 : value >= 3 ? reserve * 0.5 : value >= 1 ? reserve : reserve * CFG.take;
-      const worth = win || value >= 1 || toll(st, at) >= price * 0.25;
+      // 돈이 넉넉하면(인수하고도 비상금의 몇 배가 남으면) 통행료가 작아도 인수 — 땅이 늘면 통행료·독점 기회가 늘고 상대 땅은 줄어듦
+      const rich = p.money - price >= Math.max(reserve * CFG.richK, CFG.rich * MAN);
+      const worth = win || value >= 1 || toll(st, at) >= price * 0.25 || rich;
       if (worth && p.money - price >= need) return act({ type: 'takeover', tileId: at.id });
     }
   }

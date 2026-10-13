@@ -124,12 +124,16 @@
     if (!o.keepOpen) closeModal();
     salaryNotice(fromTx);
     p.catch((e) => handleError(e, action, o));
-    if (!NO_END_ASK.includes(action.type)) scheduleEnd();
+    if (!NO_END_ASK.includes(action.type) && !(freeTurn() && midTurn(action))) scheduleEnd();
     return true;
   }
 
   // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
   const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust'];
+  // 앱 + 실물(컴퓨터 함께) 방의 사람: 차례 중간에 하는 일이면 끝낼지 묻지 않음
+  // (월급·매각·송금·보석금·세계여행 비용은 그 뒤에 칸에서 할 일이 남음)
+  const midTurn = (a) => ['salary', 'sell', 'transfer', 'useEscape', 'passCard', 'blockAttack'].includes(a.type)
+    || (a.type === 'pay' && a.what !== 'tax');
   // 한 번에 하나만 기다리도록 타이머 하나로 관리
   let endTimer = null;
   let askOnClose = false; // 도착·포춘카드 뒤 뜬 창을 닫으면 차례 끝을 물어봄
@@ -143,7 +147,8 @@
     const t = state.turn;
     const m = me();
     if (!m || !t || t.pid !== m.id) return;
-    if (!freeTurn() && (!t.rolled || t.again || m.pendingCard || (m.travel && !t.rolled))) return;
+    if (t.again) return; // 더블이면 한 번 더 굴려야 함
+    if (!freeTurn() && (!t.rolled || m.pendingCard || (m.travel && !t.rolled))) return;
     if (t.owe || t.mustDraw || m.use) return; // 통행료·세금·포춘카드가 남았으면 차례 표시줄 버튼으로
     if ($modal.querySelector('#endask')) return;
     if ($modal.innerHTML || anim.busy || anim.queue.length) {
@@ -1475,9 +1480,10 @@
   function freeTurnBar(t, cur, mine) {
     const w = t.awaitBlock;
     const btns = [];
-    if (mine) btns.push('<button class="btn small accent" id="tend">차례 끝</button>');
+    if (mine) btns.push(`<button class="btn small accent" id="tend" ${t.again ? 'disabled' : ''}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
     const note = w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
+      : mine && t.again ? '더블! 한 번 더 굴려요'
       : mine ? '실물 주사위로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
       : cur.bot ? '🤖 컴퓨터가 진행하는 중... (아래 안내대로 실물 게임판에도 옮겨 주세요)' : '';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>

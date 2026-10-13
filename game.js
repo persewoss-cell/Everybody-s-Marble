@@ -694,9 +694,26 @@ const actions = {
         t.again = true;
       }
     }
+    // 컴퓨터가 있는 앱 + 실물 방에서 사람이 앱 주사위를 쓰면: 더블이면 한 번 더 (세 번이면 무인도)
+    const free = !app && turnsOn(room) && room.phase === 'turns' && t && t.pid === p.id;
+    if (free) {
+      t.rolled = true;
+      t.again = false;
+      if (dbl) {
+        t.doubles = (t.doubles || 0) + 1;
+        if (t.doubles >= 3) {
+          p.pos = POS.island;
+          const tx = record(room, actorId, 'roll', `${text} · 더블 3번! 무인도로 즉시 이동`, {}, before);
+          Object.assign(tx, { dice: a.dice, from, to: POS.island, jump: true });
+          return;
+        }
+        t.again = true;
+      }
+    }
     const to = (from + sum) % SPACES.length;
     text += moveTo(room, p, to, deltas);
     text += ` → ${SPACES[to].name}`;
+    if (free && to === POS.island) t.again = false;
     if (app && to === POS.island) {
       p.jail = JAIL_TURNS;
       t.again = false;
@@ -754,6 +771,7 @@ const actions = {
       if (p.use && !(p.use === 'donate' && canDonate(room, p.id))) p.use = null; // 쓸 수 없는 카드는 그냥 버림
       mustFinish(room, p);
     }
+    if (!host && !p.bankrupt && !managed(room, p) && t.again) throw new GameError('더블! 한 번 더 굴려요.');
     const before = snapshot(room);
     let note = '';
     if (host && actorId !== t.pid && (t.owe || t.mustDraw || p.use)) note = ' (방장이 넘김)';
