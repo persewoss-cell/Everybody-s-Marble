@@ -304,6 +304,8 @@ function next(st, pid) {
     if (p.money < G.TAX) return raise(st, p, G.TAX, null);
     return act({ type: 'pay', what: 'tax' });
   }
+  // 앱 + 실물 방에 사람이 있으면, 사람이 랜덤으로 뽑을지 실물 카드를 뽑아 알려 줄지 고를 때까지 기다림
+  if (t.mustDraw && st.mode !== 'app' && st.players.some((x) => !x.bot && !x.bankrupt)) return null;
   if (t.mustDraw) return act({ type: 'draw', pick: Math.random() }, 4600);
   if (p.use) return useCard(st, p, reserve);
 

@@ -797,7 +797,8 @@ const actions = {
     const cards = deck(room);
     if (!cards.length) throw new GameError('남은 포춘카드가 없어요.');
     const r = Math.max(0, Math.min(0.999999, Number(a.pick) || 0));
-    const key = cards[Math.floor(r * cards.length)];
+    // 앱 + 실물 방: 실물 카드를 뽑아 알려 준 경우 그 카드
+    const key = !appMode(room) && a.key && CARD[a.key] ? a.key : cards[Math.floor(r * cards.length)];
     const c = CARD[key];
     const before = snapshot(room);
     const deltas = {};
@@ -847,6 +848,7 @@ const actions = {
     if (key === 'olympicTour' && !room.olympic) text += ' — 개최지가 없어 패스';
     const tx = record(room, actorId, 'fortune', text, deltas, before);
     tx.card = key;
+    if (!appMode(room) && a.key) tx.real = true; // 실물 카드를 뽑아 알려 줌
     if (to !== null) Object.assign(tx, { from, to, jump: true });
   },
 
@@ -871,6 +873,15 @@ const actions = {
     const key = p.use;
     p.use = null;
     record(room, actorId, 'card', `${p.name} ${CARD[key].name} 카드 사용 안 함`, {}, before);
+  },
+
+  // 앱 + 실물 방: 컴퓨터가 포춘카드 칸에 서면 사람이 랜덤으로 뽑아 주거나, 실물 카드를 뽑아 알려 줌
+  botDraw(room, actorId, a) {
+    requirePlaying(room);
+    const t = room.turn;
+    const bot = t && room.players.find((p) => p.id === t.pid);
+    if (!room.withBots || !bot || !bot.bot || !t.mustDraw) throw new GameError('컴퓨터가 포춘카드를 뽑을 차례가 아니에요.');
+    actions.draw(room, bot.id, a.key ? { key: a.key } : { pick: a.pick });
   },
 
   // 앱 + 실물 방: 컴퓨터가 내 도시를 공격했을 때, 실물 방패·천사 카드가 있으면 막기 (또는 그냥 두기)
@@ -1400,8 +1411,8 @@ function whereAt(a) {
 }
 
 // 컴퓨터가 함께하는 앱 + 실물 방에서 사람이 남의 차례에도 할 수 있는 것
-const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack'];
-const MANAGER_ACTIONS = ['addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
+const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw'];
+const MANAGER_ACTIONS = ['botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];

@@ -159,3 +159,24 @@ test('앱 + 실물 + 컴퓨터: 사람이 앱 주사위로 더블이면 차례�
   g.applyAction(room, 'a', { type: 'endTurn' });
   assert.strictEqual(room.turn.pid, room.players[1].id);
 });
+
+test('앱 + 실물 + 컴퓨터: 컴퓨터가 포춘카드 칸에 서면 사람이 랜덤 또는 실물 카드로 정해 줌', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
+  g.applyAction(room, 'a', { type: 'start' });
+  const c = room.players[1];
+  g.applyAction(room, 'a', { type: 'orderRoll', dice: [1, 1] });
+  g.applyAction(room, c.id, { type: 'orderRoll', dice: [6, 6] });
+  assert.strictEqual(room.turn.pid, c.id);
+  c.pos = 10;
+  g.applyAction(room, c.id, { type: 'roll', dice: [1, 1] }); // → 12 포춘카드
+  assert.strictEqual(room.turn.mustDraw, true);
+  assert.strictEqual(bot.next(g.publicState(room), c.id), null); // 사람이 정할 때까지 기다림
+  room.hostId = 'x';
+  g.applyAction(room, 'a', { type: 'botDraw', key: 'shield' }); // 실물로 뽑은 방패
+  assert.strictEqual(c.card, 'shield');
+  assert.strictEqual(room.turn.mustDraw, false);
+  assert.ok(bot.next(g.publicState(room), c.id));
+  assert.throws(() => g.applyAction(room, 'a', { type: 'botDraw', pick: 0.5 }), /뽑을 차례가 아니/);
+});

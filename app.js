@@ -969,6 +969,7 @@
     bindTurnBar();
     if (m.pendingCard && !$modal.innerHTML) keepPrompt();
     if (!m.bankrupt) blockPrompt();
+    if (!m.bankrupt) botDrawPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -1522,7 +1523,12 @@
       switch (tx.kind) {
         case 'roll':
         case 'fortune':
-          if (tx.kind === 'fortune') steps.push(`🃏 포춘카드 <b>${esc(G.CARD[tx.card].name)}</b>을(를) 뽑았어요 (앱 카드라 실물 카드는 뽑지 않아도 돼요)`);
+          if (tx.kind === 'fortune') {
+            const c = `<b>${esc(G.CARD[tx.card].name)}</b>`;
+            steps.push(tx.real
+              ? (G.KEEP.includes(tx.card) ? `🃏 실물로 뽑은 ${c} 카드는 ${esc(bot.name)} 자리에 보관해 주세요` : `🃏 실물로 뽑은 ${c} 카드는 다 쓴 뒤 반납해 주세요`)
+              : `🃏 포춘카드 ${c}을(를) 랜덤으로 뽑았어요 (실물 카드는 뽑지 않아도 돼요)`);
+          }
           if (tx.to !== undefined && tx.to !== tx.from) steps.push(`🚶 ${esc(bot.name)} 말을 <b>${esc(G.SPACES[tx.to].name)}</b>(으)로 옮겨 주세요`);
           else if (tx.kind === 'roll' && /무인도/.test(tx.text)) steps.push(`🏝️ ${esc(tx.text)}`);
           if (/월급/.test(tx.text)) steps.push('💰 출발지를 지나 받은 월급은 앱에 들어갔어요');
@@ -1599,6 +1605,33 @@
         <button class="btn accent wide" data-close>확인 (반영했어요)</button>`);
     };
     setTimeout(show, 300);
+  }
+
+  // 앱 + 실물 방: 컴퓨터가 포춘카드 칸에 서면, 랜덤으로 뽑을지 실물 카드를 뽑아 알려 줄지
+  let drawAsked = '';
+  function botDrawPrompt() {
+    const t = state.turn;
+    const bot = t && player(t.pid);
+    if (!freeTurn() || !bot || !bot.bot || !t.mustDraw || animPending() || $modal.innerHTML) return;
+    const key = `${t.pid}:${state.log.length ? state.log[state.log.length - 1].id : 0}`;
+    if (drawAsked === key) return;
+    drawAsked = key;
+    const waiting = () => { const x = state.turn; return !!x && x.pid === t.pid && x.mustDraw; };
+    openModal(`<h3>🃏 ${esc(bot.name)}이(가) 포춘카드 칸에 도착했어요</h3>
+      <div class="sub">컴퓨터 카드를 어떻게 뽑을까요? (먼저 누른 사람 것으로 해요)</div>
+      <div class="row"><button class="btn accent" id="rnd">🎲 랜덤으로 뽑기</button><button class="btn secondary" id="real">🃏 실물 카드를 뽑았어요</button></div>`, (root) => {
+      root.querySelector('#rnd').onclick = () => run({ type: 'botDraw', pick: Math.random() });
+      root.querySelector('#real').onclick = () => {
+        openModal(`<h3>🃏 뽑은 실물 카드를 골라 주세요</h3><div class="sub">${esc(bot.name)}이(가) 이 카드를 쓴 것으로 앱이 진행해요.</div>
+          ${CARDS.map(([group, list]) => `<div class="sub">${group}</div><div class="cards">${list.map(([name, tier, desc]) => {
+            const c = G.FORTUNE.find((f) => f[1] === name);
+            return `<button class="fcard ${tier}" data-k="${c ? c[0] : ''}"><b>${name}</b><small>${desc}</small></button>`;
+          }).join('')}</div>`).join('')}
+          <div class="err" id="err"></div>`, (r2) => {
+          r2.querySelectorAll('[data-k]').forEach((b) => (b.onclick = () => run({ type: 'botDraw', key: b.dataset.k })));
+        }, { lock: waiting });
+      };
+    }, { lock: waiting });
   }
 
   // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기
