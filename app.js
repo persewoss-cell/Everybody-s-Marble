@@ -882,8 +882,8 @@
     const canUndo = undoTx && (host || (state.mode !== 'app' && undoTx.actorId === m.id));
     const acts = state.mode === 'app'
       ? [['sell', '🏚️', '매각'], ['fortune', '🃏', '포춘카드']]
-      : [['salary', '🏁', '월급 30만'], ['bail', '🏝️', '보석금 20만'], ['tax', '🧾', '국세청 20만'], ['travel', '✈️', '세계여행 10만'], ['olympic', '🏅', '올림픽 10만'],
-        ['bonus', '🪙', '보너스 게임'], ['fortune', '🃏', '포춘카드'], ['transfer', '💸', '송금'], ['sell', '🏚️', '매각']];
+      // 보석금·국세청·세계여행·올림픽·보너스·포춘카드는 게임판의 그 칸을 누르면 됨
+      : [['salary', '🏁', '월급 30만'], ['transfer', '💸', '송금'], ['sell', '🏚️', '매각']];
     $app.innerHTML = `${topbar()}<div class="game ${view}">
       <section class="g-board">
         <div class="board ${view === 'real' ? '' : 'card'}">${view === 'real' ? '' : '<div class="sub">🎉축제 🏅올림픽 😷전염병 🌫️황사 ⚡정전</div>'}${boardHtml()}</div>
@@ -897,7 +897,7 @@
         ${turnBar()}
         <div class="row ctrl">${m.bankrupt ? '' : `<button class="btn accent" id="dice" ${canRoll() ? '' : 'disabled'}>🎲 ${diceLabel()}</button>`}
           <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
-        ${m.bankrupt ? '' : `<div class="actions ${state.mode === 'app' ? 'app' : ''}">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
+        ${m.bankrupt ? '' : `<div class="actions app">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
         <div class="sub center">${state.mode === 'app' ? '칸을 누르면 가격·통행료를 볼 수 있어요' : '말이 도착한 칸을 누르세요'}</div>
       </section>
       <section class="g-players">
