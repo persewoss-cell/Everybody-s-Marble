@@ -969,6 +969,7 @@
     if (!m.bankrupt) blockPrompt();
     if (!m.bankrupt) botDrawPrompt();
     if (!m.bankrupt) syncPrompt();
+    if (!m.bankrupt) myTurnPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -1631,6 +1632,31 @@
         }, { lock: waiting });
       };
     }, { lock: waiting });
+  }
+
+  // 사람 차례가 되면 그 사람에게만: '당신의 차례입니다' (주사위 굴리기 / 닫기)
+  let turnShown = '';
+  function myTurnPrompt() {
+    const t = state.turn;
+    const m = me();
+    if (!turnsOn() || state.phase !== 'turns' || !t || !m || m.bot || m.bankrupt || t.pid !== m.id || t.rolled || t.awaitSync) return;
+    let k = 0;
+    for (let i = state.log.length - 1; i >= 0; i--) {
+      const x = state.log[i];
+      if (x.kind === 'turn' || (x.kind === 'info' && /^순서:/.test(x.text))) { k = x.id; break; }
+    }
+    const key = `${t.pid}:${k}`;
+    if (turnShown === key || animPending() || $modal.innerHTML) return;
+    turnShown = key;
+    openModal(`<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
+      <div class="sub">${state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL ? '세계여행! 갈 도시를 고르거나(차례 표시줄의 ✈️ 버튼), 안 가고 주사위를 굴려요.'
+        : m.jail > 0 && state.mode === 'app' ? '무인도에 있어요. 더블이 나오면 탈출해요.' : freeTurn() ? '실물 주사위를 굴려도 되고, 앱 주사위를 굴려도 돼요.' : '주사위를 굴려 출발하세요.'}</div></div>
+      <div class="row"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="goroll">🎲 주사위 굴리기</button></div>`, (root) => {
+      root.querySelector('#goroll').onclick = () => {
+        closeModal();
+        rollDice();
+      };
+    });
   }
 
   // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기

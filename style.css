@@ -460,3 +460,13 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .rboard .pcs i { width: 94cqmin; max-width: none; aspect-ratio: 1; height: auto; opacity: .55; border-width: 1px; flex: none; }
 .rboard .pcs:has(i + i) i { width: min(46cqw, 94cqh); }
 .rboard .pcs:has(i + i + i) i { width: min(46cqw, 46cqh); }
+
+/* 칸 아래 통행료·구입비: 진하게 */
+.lbl .tp { color: #1b2236; font-weight: 700; opacity: .9; }
+/* 축제·올림픽·전염병·황사·정전 표시: 칸을 넘지 않는 선에서 크게 */
+.lbl .tb { white-space: nowrap; overflow: hidden; max-width: 100%; line-height: 1.05; }
+.rboard .lbl .tb { font-size: clamp(7px, min(22cqmin, 17cqi), 20px); }
+.rboard .cell.l .lbl .tb, .rboard .cell.r .lbl .tb { font-size: clamp(7px, min(20cqmin, 13cqi), 18px); }
+.tiles .tile .lbl .tb { font-size: 15px; }
+/* 내 차례 알림 */
+.myturn h3 { font-size: 22px; justify-content: center; }
