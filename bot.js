@@ -277,6 +277,7 @@ function next(st, pid) {
   const t = st.turn;
   if (!t || t.pid !== pid) return null;
   if (t.awaitBlock) return null; // 공격받은 사람이 방패를 쓸지 고르는 중
+  if (t.awaitSync) return null; // 앞 컴퓨터 결과를 사람이 실물 게임판에 반영하는 중
   const key = `${st.code}:${pid}:${landId(st)}`;
   const reserve = reserveOf(st, p);
 
@@ -325,7 +326,7 @@ function next(st, pid) {
         return act({ type: 'buy', tileId: at.id, items });
       }
     } else if (pr && pr.owner === pid) {
-      if ((at.tour === 'beach' || st.effects[at.id]) && !did.arrive) return act({ type: 'arrive', tileId: at.id });
+      if ((at.tour === 'beach' || st.effects[at.id]) && !did.arrive && !did.bought) return act({ type: 'arrive', tileId: at.id });
       if (at.kind === 'city' && once(key + ':build')) {
         const plan = buildPlan(st, p, at, buildBudget(st, p, at, reserve));
         if (plan.items.length) return act({ type: 'build', tileId: at.id, items: plan.items });

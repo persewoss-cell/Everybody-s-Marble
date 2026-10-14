@@ -454,3 +454,9 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 /* 컴퓨터 차례 끝 — 실물 게임판에서 할 일 */
 .modal ol.steps { margin: 8px 0 10px; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.45; }
 .modal ol.steps li::marker { font-weight: 800; color: var(--muted); }
+
+/* 실제버전 게임판의 말: 건물 줄을 뺀 칸(이름 자리)에서 최대한 크게, 조금 더 투명하게, 흰 테두리는 얇게 */
+.rboard .pcs { container-type: size; padding: 3%; gap: 3%; flex-wrap: wrap; align-content: center; justify-content: center; }
+.rboard .pcs i { width: 94cqmin; max-width: none; aspect-ratio: 1; height: auto; opacity: .55; border-width: 1px; flex: none; }
+.rboard .pcs:has(i + i) i { width: min(46cqw, 94cqh); }
+.rboard .pcs:has(i + i + i) i { width: min(46cqw, 46cqh); }

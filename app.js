@@ -250,15 +250,6 @@
     // 내 동작이 아직 확정 전이면, 그 동작이 들어간 상태가 올 때까지 미리 계산한 화면을 유지
     if (!(pending && s.nextTxId < predictedNext)) adopt(s);
     if (!firstState) {
-      // 앱 + 실물 방: 컴퓨터 차례가 끝나면 실물 게임판에 반영할 일 알려 주기
-      const meP = s.players.find((p) => p.id === session.playerId);
-      if (s.mode !== 'app' && s.withBots && meP && !meP.bot) {
-        for (const tx of s.log) {
-          if (tx.id <= lastSeenTx || tx.undone) continue;
-          const actor = s.players.find((p) => p.id === tx.actorId);
-          if (actor && actor.bot && (tx.kind === 'turn' || tx.kind === 'bankrupt')) botTurnNotice(tx, s);
-        }
-      }
       for (const tx of s.log) {
         if (tx.id <= lastSeenTx || tx.actorId === session.playerId || tx.kind === 'start') continue;
         const d = tx.deltas[session.playerId];
@@ -970,6 +961,7 @@
     if (m.pendingCard && !$modal.innerHTML) keepPrompt();
     if (!m.bankrupt) blockPrompt();
     if (!m.bankrupt) botDrawPrompt();
+    if (!m.bankrupt) syncPrompt();
     q('#undo').onclick = undoDialog;
     q('#rules').onclick = showRules;
     if (q('#hostmenu')) q('#hostmenu').onclick = hostMenu;
@@ -1097,7 +1089,7 @@
       const fromStart = !here && startBuild();
       const canBuild = here || fromStart;
       const checks = t.kind === 'city' && canBuild ? buildChecks(t, pr) : '';
-      const canArrive = (t.tour === 'beach' || fx) && here && !did(tt, 'arrive');
+      const canArrive = (t.tour === 'beach' || fx) && here && !did(tt, 'arrive') && !did(tt, 'bought');
       openModal(`${head}
         ${checks ? `<div class="buildbox"><div class="sub">건물 짓기 (${here ? '도착했을 때' : '출발지 도착 — 한 곳만'})</div>${checks}</div>` : ''}
         ${priceTable(t)}
@@ -1503,108 +1495,108 @@
   function freeTurnBar(t, cur, mine) {
     const w = t.awaitBlock;
     const btns = [];
-    if (mine) btns.push(`<button class="btn small accent" id="tend" ${t.again ? 'disabled' : ''}>차례 끝</button>`);
+    if (mine) btns.push(`<button class="btn small accent" id="tend" ${t.again || t.awaitSync ? 'disabled' : ''}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
-    const note = w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
+    const sync = t.awaitSync;
+    const note = sync ? `🤖 ${esc(player(sync.bot).name)} 결과를 실물 게임판에 반영하고 확인을 눌러 주세요`
+      : w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
       : mine && t.again ? '더블! 한 번 더 굴려요'
       : mine ? '실물 주사위로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
       : cur.bot ? '🤖 컴퓨터가 진행하는 중... (기록을 보고 실물 게임판에도 옮겨 주세요)' : '';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
   }
-  // 컴퓨터가 한 일 → 실물 게임판에서 할 일
-  function physicalSteps(txs, bot) {
+  // 컴퓨터 차례 동안 실물 게임판에서 바뀐 것 (차례 시작 때와 지금을 비교해 최종 결과만)
+  // 받침에 맞는 조사 (을/를, 으로/로)
+  const batchim = (w) => { const c = String(w).trim().slice(-1).charCodeAt(0) - 0xac00; return c >= 0 && c <= 11171 ? c % 28 : 0; };
+  const eul = (w) => `${w}${batchim(w.replace(/<[^>]+>/g, '')) ? '을' : '를'}`;
+  const ro = (w) => { const b = batchim(w.replace(/<[^>]+>/g, '')); return `${w}${b && b !== 8 ? '으로' : '로'}`; };
+  const colorName = (p) => ((G.PIECES.find((c) => c.color === (p && p.color)) || {}).name || '');
+  function boardChanges(w, bot) {
+    const S = w.start;
     const T = (id) => `<b>${esc(G.TILE[id].name)}</b>`;
-    const piece = (G.PIECES.find((c) => c.color === bot.color) || {}).name || '';
-    const who = (id) => esc((player(id) || {}).name || '');
+    const P = (id) => { const x = player(id); return x ? `${esc(x.name)}(${esc(colorName(x))})` : ''; };
     const steps = [];
-    for (const tx of txs) {
-      const info = tx.info || {};
-      switch (tx.kind) {
-        case 'roll':
-        case 'fortune':
-          if (tx.kind === 'fortune') {
-            const c = `<b>${esc(G.CARD[tx.card].name)}</b>`;
-            steps.push(tx.real
-              ? (G.KEEP.includes(tx.card) ? `🃏 실물로 뽑은 ${c} 카드는 ${esc(bot.name)} 자리에 보관해 주세요` : `🃏 실물로 뽑은 ${c} 카드는 다 쓴 뒤 반납해 주세요`)
-              : `🃏 포춘카드 ${c}을(를) 랜덤으로 뽑았어요 (실물 카드는 뽑지 않아도 돼요)`);
-          }
-          if (tx.to !== undefined && tx.to !== tx.from) steps.push(`🚶 ${esc(bot.name)} 말을 <b>${esc(G.SPACES[tx.to].name)}</b>(으)로 옮겨 주세요`);
-          else if (tx.kind === 'roll' && /무인도/.test(tx.text)) steps.push(`🏝️ ${esc(tx.text)}`);
-          if (/월급/.test(tx.text)) steps.push('💰 출발지를 지나 받은 월급은 앱에 들어갔어요');
-          break;
-        case 'buy': {
-          const t = G.TILE[info.tile];
-          const what = t.kind === 'tour' ? '관광지 깃발' : info.items && info.items.length ? info.items.map((k) => G.ITEM_NAMES[k]).join('·') : '깃발';
-          steps.push(`🚩 ${T(info.tile)}에 ${esc(piece)} ${what}을(를) 올리고, 도시증서를 ${esc(bot.name)} 자리에 놓아 주세요`);
-          break;
-        }
-        case 'build':
-          steps.push(info.items.includes('landmark')
-            ? `🗼 ${T(info.tile)}: 깃발·건물을 치우고 ${esc(piece)} 랜드마크를 올려 주세요`
-            : `🏠 ${T(info.tile)}에 ${esc(piece)} ${info.items.map((k) => G.ITEM_NAMES[k]).join('·')}을(를) 올려 주세요`);
-          break;
-        case 'takeover':
-          steps.push(`🤝 ${T(info.tile)}: ${who(info.from)}의 깃발·건물을 ${esc(piece)}으로 바꾸고, 도시증서를 ${esc(bot.name)}에게 주세요`);
-          break;
-        case 'sell':
-          steps.push(`🏚️ ${T(info.tile)}의 깃발·건물을 모두 치우고 도시증서를 은행에 반납해 주세요`);
-          break;
-        case 'olympic':
-          steps.push(`🏅 ${T(info.tile)}에 올림픽 마크(×${info.times})를 올려 주세요 (다른 도시에 있으면 옮겨 주세요)`);
-          break;
-        case 'arrive':
-          if (G.TILE[info.tile].tour === 'beach') steps.push(`⛱️ ${T(info.tile)} 관광지 건물을 앱 게임판과 같은 단계로 바꿔 주세요`);
-          break;
-        case 'toll':
-        case 'pay':
-        case 'bonus':
-          steps.push(`💸 ${esc(tx.text)} (돈은 앱에서 처리했어요)`);
-          break;
-        case 'card':
-          if (info.mark) {
-            const name = { epidemic: '전염병', dust: '황사', blackout: '도시정전' }[info.mark];
-            steps.push(`🃏 ${info.tiles.map(T).join(', ')}에 ${name} 마크를 올려 주세요`);
-          } else if (info.removed) {
-            for (const [id, k] of info.removed) steps.push(`💥 ${T(id)}의 ${G.ITEM_NAMES[k]}을(를) 치워 주세요 (건물이 다 없어지면 깃발로 표시)`);
-          } else if (info.cleared) {
-            steps.push(`🔨 ${T(info.cleared[0])}의 깃발·건물을 모두 치우고 도시증서를 은행에 반납해 주세요`);
-          } else if (info.swap) {
-            steps.push(`🔄 ${T(info.swap[0])}와(과) ${T(info.swap[1])}의 깃발·건물 색과 도시증서를 서로 바꿔 주세요`);
-          } else if (info.give) {
-            steps.push(`🎁 ${T(info.give)}의 깃발·건물을 ${who(info.to)}의 색으로 바꾸고 도시증서를 ${who(info.to)}에게 주세요`);
-          } else {
-            steps.push(`🃏 ${esc(tx.text)}`);
-          }
-          break;
-        case 'bankrupt':
-          steps.push(`☠️ ${esc(bot.name)} 파산 — 말과 깃발·건물을 모두 치우고 도시증서를 반납해 주세요`);
-          break;
-        default:
-          break;
+    // 말: 최종 위치만
+    if (bot.bankrupt && !S.bankrupt.includes(bot.id)) steps.push(`☠️ ${esc(bot.name)} 파산 — 말을 게임판에서 치워 주세요`);
+    else if ((S.pos[bot.id] || 0) !== (bot.pos || 0)) steps.push(`🚶 ${esc(bot.name)} 말을 ${ro(`<b>${esc(G.SPACES[bot.pos || 0].name)}</b>`)} 옮겨 주세요`);
+    const listItems = (items) => items.map((k) => G.ITEM_NAMES[k]).join('·');
+    const before = { props: S.props };
+    for (const t of G.BOARD) {
+      const b = S.props[t.id];
+      const a = state.props[t.id];
+      if (!b && !a) continue;
+      if (b && !a) { steps.push(`🏚️ ${T(t.id)}: 깃발·건물을 모두 치우고 도시증서를 은행에 반납해 주세요`); continue; }
+      const built = (pr) => (pr && pr.built ? G.BUILDINGS.filter((k) => pr.built[k]) : []);
+      if (!b && a) {
+        const items = built(a);
+        const what = t.kind === 'tour' ? `관광지 ${G.TOUR_LEVELS[Math.max(0, G.tourLevel(state, t))]}` : items.length ? listItems(items) : '깃발';
+        steps.push(`🚩 ${T(t.id)}: ${P(a.owner)} ${eul(what)} 올리고, 도시증서를 ${esc(player(a.owner).name)}에게 주세요`);
+        continue;
       }
+      if (b.owner !== a.owner) steps.push(`🔄 ${T(t.id)}: 깃발·건물을 ${P(a.owner)} 색으로 바꾸고, 도시증서를 ${esc(player(a.owner).name)}에게 주세요`);
+      if (t.kind === 'city') {
+        const was = built(b);
+        const now = built(a);
+        if (now.includes('landmark') && !was.includes('landmark')) steps.push(`🗼 ${T(t.id)}: 건물을 치우고 랜드마크를 올려 주세요`);
+        else {
+          const add = now.filter((k) => !was.includes(k));
+          const del = was.filter((k) => !now.includes(k));
+          if (add.length) steps.push(`🏠 ${T(t.id)}에 ${eul(listItems(add))} 올려 주세요`);
+          if (del.length) steps.push(`💥 ${T(t.id)}의 ${eul(listItems(del))} 치워 주세요${now.length ? '' : ' (깃발로 표시)'}`);
+        }
+      } else {
+        const lb = G.tourLevel(before, t);
+        const la = G.tourLevel(state, t);
+        if (lb !== la && b.owner === a.owner) steps.push(`⛱️ ${T(t.id)}: 관광지 건물을 ${ro(G.TOUR_LEVELS[la])} 바꿔 주세요`);
+      }
+    }
+    // 마크
+    const MARK = { epidemic: '전염병', dust: '황사', blackout: '도시정전' };
+    for (const t of G.BOARD) {
+      const eb = S.effects[t.id] || {};
+      const ea = state.effects[t.id] || {};
+      for (const k of Object.keys(MARK)) {
+        if (ea[k] && !eb[k]) steps.push(`🃏 ${T(t.id)}에 ${MARK[k]} 마크를 올려 주세요`);
+        if (!ea[k] && eb[k]) steps.push(`🧹 ${T(t.id)}의 ${MARK[k]} 마크를 치워 주세요`);
+      }
+    }
+    const ob = S.olympic;
+    const oa = state.olympic;
+    if (oa && (!ob || ob.tileId !== oa.tileId || ob.count !== oa.count)) steps.push(`🏅 ${T(oa.tileId)}에 올림픽 마크(×${oa.count + 1})를 놓아 주세요${ob && ob.tileId !== oa.tileId ? ` (${T(ob.tileId)}에 있던 마크는 치워요)` : ''}`);
+    if (ob && !oa) steps.push(`🏅 ${T(ob.tileId)}의 올림픽 마크를 치워 주세요`);
+    // 실물로 뽑아 준 포춘카드
+    for (const tx of state.log) {
+      if (tx.id < S.tx || tx.kind !== 'fortune' || !tx.real || tx.actorId !== bot.id || tx.undone) continue;
+      const c = `<b>${esc(G.CARD[tx.card].name)}</b>`;
+      steps.push(G.KEEP.includes(tx.card) && bot.card === tx.card ? `🃏 실물 ${c} 카드를 ${esc(bot.name)} 자리에 보관해 주세요` : `🃏 실물 ${c} 카드를 반납해 주세요`);
     }
     return steps;
   }
-  // 컴퓨터 차례가 끝나면 (앱 + 실물 방의 사람에게) 실물 게임판에 반영할 일을 확인 창으로
-  function botTurnNotice(endTx, st) {
-    const bot = st.players.find((p) => p.id === endTx.actorId);
-    const i = st.log.indexOf(endTx);
-    const txs = [];
-    for (let j = i - (endTx.kind === 'turn' ? 1 : 0); j >= 0; j--) {
-      const tx = st.log[j];
-      if (tx.kind === 'turn' && j !== i) break;
-      if (tx.actorId === bot.id && !tx.undone) txs.unshift(tx);
+  // 컴퓨터 차례가 끝나면: 실물 게임판에 반영할 일 → 확인을 눌러야 다음 차례 진행
+  let syncShown = null;
+  let syncTimer = null;
+  function syncPrompt() {
+    const w = state && state.turn && state.turn.awaitSync;
+    if (!freeTurn() || !w || syncShown === w.start.tx) return;
+    if (animPending() || $modal.innerHTML) {
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => { if (state && state.status === 'playing') syncPrompt(); }, 600);
+      return;
     }
-    const steps = physicalSteps(txs, bot);
-    const show = () => {
-      if ($modal.innerHTML || animPending()) return setTimeout(show, 500);
-      openModal(`<h3>🤖 ${esc(bot.name)} 차례가 끝났어요</h3>
-        <div class="sub">컴퓨터 결과를 실제 게임 보드판에 반영해 주세요.</div>
-        ${steps.length ? `<ol class="steps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>` : '<p>실물 게임판에서 할 일은 없어요.</p>'}
-        <button class="btn accent wide" data-close>확인 (반영했어요)</button>`);
-    };
-    setTimeout(show, 300);
+    syncShown = w.start.tx;
+    const bot = player(w.bot);
+    const steps = boardChanges(w, bot);
+    openModal(`<h3>🤖 ${esc(bot.name)} <span class="dot" style="background:${pc(bot)}"></span>${esc(colorName(bot))} 차례가 끝났어요</h3>
+      <div class="sub">컴퓨터 결과를 실제 게임 보드판에 반영해 주세요.</div>
+      ${steps.length ? `<ol class="steps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>` : '<p>실물 게임판에서 바꿀 것은 없어요.</p>'}
+      <button class="btn accent wide" id="synced">확인 (반영했어요)</button>`, (root) => {
+      root.querySelector('#synced').onclick = () => {
+        const x = state.turn && state.turn.awaitSync;
+        if (x && x.start.tx === w.start.tx) run({ type: 'syncDone' });
+        else closeModal();
+      };
+    });
   }
 
   // 앱 + 실물 방: 컴퓨터가 포춘카드 칸에 서면, 랜덤으로 뽑을지 실물 카드를 뽑아 알려 줄지
@@ -1663,7 +1655,7 @@
     const q = (x) => $app.querySelector(x);
     if (q('#realorder')) q('#realorder').onclick = realOrderDialog;
     if (q('#tend')) {
-      q('#tend').onclick = () => (myTurn() || !isHost() ? run({ type: 'endTurn' })
+      q('#tend').onclick = () => ((state.turn && state.turn.pid === session.playerId) || !isHost() ? run({ type: 'endTurn' })
         : confirmBox(`${player(state.turn.pid).name}님 차례를 넘길까요?\n(남은 통행료·세금·카드는 없던 일이 돼요)`, { type: 'endTurn' }, '넘기기'));
     }
     if (q('#tpay')) q('#tpay').onclick = () => { const sp = G.SPACES[state.turn.spot]; if (sp && sp.id) tileSheet(sp.id); };

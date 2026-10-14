@@ -180,3 +180,15 @@ test('앱 + 실물 + 컴퓨터: 컴퓨터가 포춘카드 칸에 서면 사람�
   assert.ok(bot.next(g.publicState(room), c.id));
   assert.throws(() => g.applyAction(room, 'a', { type: 'botDraw', pick: 0.5 }), /뽑을 차례가 아니/);
 });
+
+test('컴퓨터: 해변 관광지를 산 그 도착은 방문으로 치지 않음 (바로 파라솔이 되지 않음)', () => {
+  const { room, b, t } = botAt('발리', 200 * g.MAN);
+  room.mode = 'app';
+  const s1 = bot.next(g.publicState(room), b.id);
+  assert.strictEqual(s1.action.type, 'buy');
+  g.applyAction(room, b.id, s1.action);
+  const s2 = bot.next(g.publicState(room), b.id);
+  assert.notStrictEqual(s2.action.type, 'arrive');
+  assert.throws(() => g.applyAction(room, b.id, { type: 'arrive', tileId: t.id }), /방문으로 치지 않아요/);
+  assert.strictEqual(g.tourLevel(room, t), 0);
+});

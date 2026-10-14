@@ -544,7 +544,22 @@ function nextTurn(room) {
   const alive = room.order.filter((id) => room.players.some((p) => p.id === id && !p.bankrupt));
   if (!alive.length) return;
   const i = alive.indexOf(room.turn && room.turn.pid);
+  const prev = room.turn;
   room.turn = { pid: alive[(i + 1) % alive.length], rolled: false, again: false, doubles: 0 };
+  markStart(room);
+  // 컴퓨터 차례가 끝나면, 사람이 실물 게임판에 반영하고 확인할 때까지 다음 차례를 기다림
+  const was = prev && room.players.find((p) => p.id === prev.pid);
+  if (room.withBots && was && was.bot && prev.start && room.players.some((p) => !p.bot && !p.bankrupt)) {
+    room.turn.awaitSync = { bot: was.id, start: prev.start };
+  }
+}
+function markStart(room) {
+  if (!room.withBots || !room.turn) return;
+  room.turn.start = JSON.parse(JSON.stringify({
+    props: room.props, effects: room.effects, olympic: room.olympic, tx: room.nextTxId,
+    pos: Object.fromEntries(room.players.map((p) => [p.id, p.pos || 0])),
+    bankrupt: room.players.filter((p) => p.bankrupt).map((p) => p.id),
+  }));
 }
 
 // 앱으로만 하는 방: 말이 도착한 칸에서 해야 할 일·할 수 있는 일을 기록
@@ -644,6 +659,7 @@ const actions = {
     room.phase = 'turns';
     room.orderRolls = {};
     room.turn = { pid: room.order[0], rolled: false, again: false, doubles: 0 };
+    markStart(room);
     record(room, actorId, 'info', `순서: ${room.order.map((id) => pname(room, id)).join(' → ')}`, {});
   },
 
@@ -873,6 +889,13 @@ const actions = {
     const key = p.use;
     p.use = null;
     record(room, actorId, 'card', `${p.name} ${CARD[key].name} 카드 사용 안 함`, {}, before);
+  },
+
+  // 앱 + 실물 방: 컴퓨터 결과를 실물 게임판에 반영했음 (아무나 한 명)
+  syncDone(room, actorId) {
+    requirePlaying(room);
+    if (!room.turn || !room.turn.awaitSync) throw new GameError('이미 확인했어요.');
+    delete room.turn.awaitSync;
   },
 
   // 앱 + 실물 방: 컴퓨터가 포춘카드 칸에 서면 사람이 랜덤으로 뽑아 주거나, 실물 카드를 뽑아 알려 줌
@@ -1411,8 +1434,8 @@ function whereAt(a) {
 }
 
 // 컴퓨터가 함께하는 앱 + 실물 방에서 사람이 남의 차례에도 할 수 있는 것
-const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw'];
-const MANAGER_ACTIONS = ['botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
+const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw', 'syncDone'];
+const MANAGER_ACTIONS = ['syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
@@ -1441,7 +1464,7 @@ function checkRules(room, p, a) {
     case 'buy':
     case 'arrive':
       if (!tile || !here(tile.pos)) throw new GameError(notHere);
-      if (type === 'arrive' && t.did && t.did.arrive) throw new GameError('이미 도착 처리를 했어요.');
+      if (type === 'arrive' && t.did && (t.did.arrive || t.did.bought)) throw new GameError(t.did.bought ? '방금 산 곳이라 방문으로 치지 않아요.' : '이미 도착 처리를 했어요.');
       return;
     case 'build':
       if (tile && here(tile.pos)) return;
@@ -1488,6 +1511,9 @@ function afterRules(room, p, a) {
     case 'arrive':
       t.did.arrive = true;
       break;
+    case 'buy':
+      t.did.bought = true;
+      break;
     case 'bonus':
       t.did.bonus = true;
       break;
@@ -1525,6 +1551,11 @@ function applyAction(room, actorId, action) {
   const app = !!me && managed(room, me);
   if (app && actorId !== room.hostId) checkRules(room, me, action);
   // 컴퓨터가 함께하는 앱 + 실물 방: 사람도 거래는 자기 차례에만 (방장은 바로잡기용으로 언제든)
+  // 컴퓨터 결과를 실물에 반영하고 확인하기 전에는 다음 사람도 기다림
+  if (room.withBots && me && !app && actorId !== room.hostId && room.status === 'playing' && room.turn && room.turn.awaitSync
+    && room.turn.pid === me.id && ['endTurn', ...TILE_ACTIONS, 'roll', 'pay', 'sell', 'salary', 'transfer'].includes(action.type)) {
+    throw new GameError('먼저 컴퓨터 결과를 실물 게임판에 반영하고 확인을 눌러 주세요.');
+  }
   if (room.withBots && me && !app && actorId !== room.hostId && room.status === 'playing' && !HUMAN_ANYTIME.includes(action.type)) {
     if (room.phase !== 'turns') throw new GameError('먼저 순서를 정해요.');
     requireTurn(room, me);
