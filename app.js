@@ -129,7 +129,7 @@
   }
 
   // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
-  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust'];
+  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'blockAttack', 'passCard', 'timer', 'addBot'];
   // 앱 + 실물(컴퓨터 함께) 방의 사람: 차례 중간에 하는 일이면 끝낼지 묻지 않음
   // (월급·매각·송금·보석금·세계여행 비용은 그 뒤에 칸에서 할 일이 남음)
   const midTurn = (a) => ['salary', 'sell', 'transfer', 'useEscape', 'passCard', 'blockAttack'].includes(a.type)
@@ -148,6 +148,13 @@
     const m = me();
     if (!m || !t || t.pid !== m.id) return;
     if (t.again) return; // 더블이면 한 번 더 굴려야 함
+    if (freeTurn()) {
+      // 이번 차례에 내가 실제로 한 일이 있을 때만 (차례가 넘어온 직후·확인 버튼 뒤에는 묻지 않음)
+      let start = 0;
+      for (let i = state.log.length - 1; i >= 0; i--) if (state.log[i].kind === 'turn') { start = state.log[i].id; break; }
+      const acted = state.log.some((x) => x.id > start && x.actorId === m.id && !x.undone && !['info', 'orderRoll'].includes(x.kind));
+      if (!acted) return;
+    }
     if (!freeTurn() && (!t.rolled || m.pendingCard || (m.travel && !t.rolled))) return;
     if (t.owe || t.mustDraw || m.use) return; // 통행료·세금·포춘카드가 남았으면 차례 표시줄 버튼으로
     if ($modal.querySelector('#endask')) return;
