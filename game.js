@@ -600,6 +600,7 @@ function canDonate(room, pid) {
 }
 function mustFinish(room, p) {
   const t = room.turn;
+  if (t.awaitDefense) throw new GameError(`${pname(room, t.awaitDefense.victim)}님이 방어 카드를 쓸지 고르는 중이에요.`);
   if (t.owe === 'toll') throw new GameError('먼저 통행료를 내 주세요.');
   if (t.owe === 'tax') throw new GameError('먼저 세금을 내 주세요.');
   if (t.mustDraw) throw new GameError('먼저 포춘카드를 뽑아 주세요.');
@@ -889,6 +890,25 @@ const actions = {
     const key = p.use;
     p.use = null;
     record(room, actorId, 'card', `${p.name} ${CARD[key].name} 카드 사용 안 함`, {}, before);
+  },
+
+  // 공격받은 사람: 보관 중인 방패·천사로 막기, 또는 그냥 받기
+  defend(room, actorId, a) {
+    requirePlaying(room);
+    const t = room.turn;
+    const w = t && t.awaitDefense;
+    if (!w || (w.victim !== actorId && actorId !== room.hostId)) throw new GameError('막을 공격이 없어요.');
+    const victim = getPlayer(room, w.victim);
+    const attacker = getPlayer(room, w.attacker);
+    delete t.awaitDefense;
+    if (a.use && (victim.card === 'shield' || victim.card === 'angel')) {
+      const before = snapshot(room);
+      const used = CARD[victim.card].name;
+      victim.card = null;
+      record(room, actorId, 'card', `${victim.name}이(가) ${used} 카드로 ${attacker.name}의 ${CARD[w.type].name} 공격을 막았어요`, {}, before);
+      return;
+    }
+    actions[w.type](room, w.attacker, { ...w.action, noDefense: true });
   },
 
   // 앱 + 실물 방: 컴퓨터 결과를 실물 게임판에 반영했음 (아무나 한 명)
@@ -1219,7 +1239,7 @@ const actions = {
   // ---- 포춘카드 공격 ----
   // 전염병: 고른 도시와 같은 색 도시 모두 통행료 50% (방문자가 생기면 해제)
   epidemic(room, actorId, a) {
-    const { p, tile } = attackTarget(room, actorId, a.tileId, { city: true });
+    const { p, tile } = attackTarget(room, actorId, a, { city: true });
     if (!p) return;
     const before = snapshot(room);
     const hit = BOARD.filter((t) => t.kind === 'city' && t.group === tile.group && room.props[t.id]);
@@ -1227,14 +1247,14 @@ const actions = {
     tag(record(room, actorId, 'card', `${p.name} 전염병 → ${hit.map((t) => t.name).join(', ')} 통행료 50%`, {}, before), { mark: 'epidemic', tiles: hit.map((t) => t.id) });
   },
   dust(room, actorId, a) {
-    const { p, tile } = attackTarget(room, actorId, a.tileId, {});
+    const { p, tile } = attackTarget(room, actorId, a, {});
     if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], dust: true };
     tag(record(room, actorId, 'card', `${p.name} 황사 → [${tile.name}] 통행료 50%`, {}, before), { mark: 'dust', tiles: [tile.id] });
   },
   blackout(room, actorId, a) {
-    const { p, tile } = attackTarget(room, actorId, a.tileId, {});
+    const { p, tile } = attackTarget(room, actorId, a, {});
     if (!p) return;
     const before = snapshot(room);
     room.effects[tile.id] = { ...room.effects[tile.id], blackout: true };
@@ -1242,7 +1262,7 @@ const actions = {
   },
   // 지진: 상대 도시의 가장 비싼 건물 하나 파괴
   quake(room, actorId, a) {
-    const { p, tile, prop } = attackTarget(room, actorId, a.tileId, { city: true, noLandmark: '공격' });
+    const { p, tile, prop } = attackTarget(room, actorId, a, { city: true, noLandmark: '공격' });
     if (!p) return;
     const before = snapshot(room);
     const k = destroyTop(tile, prop);
@@ -1251,7 +1271,7 @@ const actions = {
   },
   // 외계인 침공: 같은 색 도시마다 가장 비싼 건물 하나씩 파괴 (랜드마크 도시 제외)
   alien(room, actorId, a) {
-    const { p, tile } = attackTarget(room, actorId, a.tileId, { city: true });
+    const { p, tile } = attackTarget(room, actorId, a, { city: true });
     if (!p) return;
     const before = snapshot(room);
     const done = [];
@@ -1268,7 +1288,7 @@ const actions = {
   },
   // 강제매각: 상대 도시를 없애고, 주인은 은행에서 매각비용을 받음
   forceSell(room, actorId, a) {
-    const { p, tile, owner } = attackTarget(room, actorId, a.tileId, { noLandmark: '공격' });
+    const { p, tile, owner } = attackTarget(room, actorId, a, { noLandmark: '공격' });
     if (!p) return;
     const amount = sellPrice(room, tile.id);
     const before = snapshot(room);
@@ -1277,11 +1297,12 @@ const actions = {
   },
   // 도시체인지: 상대 도시 하나와 내 도시 하나를 맞교환 (랜드마크 도시 제외)
   swap(room, actorId, a) {
-    const { p, tile, prop, owner } = attackTarget(room, actorId, a.tileId, { noLandmark: '교환' });
-    if (!p) return;
+    // 맞바꿀 내 도시를 먼저 확인 (상대가 막을지 고르기 전에)
     const mine = tileOf(room, a.mineId, 'owned');
-    if (mine.prop.owner !== p.id) throw new GameError('맞바꿀 내 도시를 골라 주세요.');
+    if (mine.prop.owner !== actorId) throw new GameError('맞바꿀 내 도시를 골라 주세요.');
     noLandmark(mine.tile, mine.prop, '교환');
+    const { p, tile, prop, owner } = attackTarget(room, actorId, a, { noLandmark: '교환' });
+    if (!p) return;
     const before = snapshot(room);
     prop.owner = p.id;
     mine.prop.owner = owner.id;
@@ -1405,21 +1426,31 @@ function lastUndoable(room) {
   return null;
 }
 
-function attackTarget(room, actorId, tileId, opt) {
+function attackTarget(room, actorId, a, opt) {
   requirePlaying(room);
   const p = activePlayer(room, actorId);
-  const { tile, prop } = tileOf(room, tileId, 'owned');
+  const { tile, prop } = tileOf(room, a.tileId, 'owned');
   if (prop.owner === p.id) throw new GameError('상대방의 도시를 골라 주세요.');
   if (opt.city && tile.kind !== 'city') throw new GameError('일반도시를 골라 주세요.');
   if (opt.noLandmark) noLandmark(tile, prop, opt.noLandmark);
   const owner = getPlayer(room, prop.owner);
-  // 앱으로만 하는 방: 상대가 방패(없으면 천사)를 보관 중이면 자동으로 막음
-  if ((appMode(room) || owner.bot) && (owner.card === 'shield' || owner.card === 'angel')) {
-    const before = snapshot(room);
-    const used = CARD[owner.card].name;
-    owner.card = null;
-    record(room, actorId, 'card', `${owner.name}이(가) ${used} 카드로 ${p.name}의 공격을 막았어요`, {}, before);
-    return {};
+  // 상대가 방패·천사를 보관 중이면 (앱이 카드를 아는 경우: 앱으로만 하는 방, 또는 컴퓨터)
+  const def = owner.card === 'shield' || owner.card === 'angel' ? owner.card : null;
+  if (def && !a.noDefense && (appMode(room) || owner.bot)) {
+    if (owner.bot) {
+      // 컴퓨터: 방패는 늘 쓰고, 천사는 큰 공격에만 (통행료 면제용으로 아껴 둠)
+      if (def === 'shield' || !['dust', 'blackout', 'epidemic'].includes(a.type)) {
+        const before = snapshot(room);
+        owner.card = null;
+        record(room, actorId, 'card', `${owner.name}이(가) ${CARD[def].name} 카드로 ${p.name}의 ${CARD[a.type].name} 공격을 막았어요`, {}, before);
+        return {};
+      }
+    } else if (room.turn) {
+      // 사람: 다른 사람 차례라도 막을지 직접 고름 (고를 때까지 공격하는 사람·컴퓨터가 기다림)
+      room.turn.awaitDefense = { victim: owner.id, card: def, type: a.type, attacker: p.id, tile: tile.id, action: { ...a } };
+      record(room, actorId, 'info', `${p.name}이(가) ${owner.name}의 [${tile.name}]에 ${CARD[a.type].name} — ${owner.name}님이 ${CARD[def].name} 카드로 막을지 고르는 중`, {});
+      return {};
+    }
   }
   return { p, tile, prop, owner };
 }
@@ -1434,8 +1465,8 @@ function whereAt(a) {
 }
 
 // 컴퓨터가 함께하는 앱 + 실물 방에서 사람이 남의 차례에도 할 수 있는 것
-const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw', 'syncDone'];
-const MANAGER_ACTIONS = ['syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
+const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw', 'syncDone', 'defend'];
+const MANAGER_ACTIONS = ['defend', 'syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
@@ -1444,7 +1475,7 @@ function checkRules(room, p, a) {
   const t = room.turn;
   const type = a.type;
   if (['move', 'salary', 'transfer', 'sponsor', 'undo'].includes(type)) throw new GameError(`앱으로만 하는 방에서는 ${HOST_FIX}`);
-  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard', 'timer'].includes(type)) return;
+  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard', 'timer', 'defend'].includes(type)) return;
   if (room.status !== 'playing') return;
   if (room.phase !== 'turns' || !t) throw new GameError('먼저 순서를 정해요.');
   if (t.pid !== p.id) throw new GameError(`지금은 ${pname(room, t.pid)}님 차례예요.`);

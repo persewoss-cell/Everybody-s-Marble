@@ -355,8 +355,11 @@ test('앱 모드: 포춘카드 뽑기, 보관 카드는 1장, 방패로 공격 �
   act(room, 'b', 'roll', { dice: [1, 2] }); // → 23 로마
   act(room, 'b', 'buy', { tileId: id('로마') });
   act(room, 'b', 'endTurn');
-  act(room, 'a', 'quake', { tileId: id('로마') }); // 건물이 없어도 방패가 먼저 막음 (방장은 바로잡기용으로 언제든)
+  act(room, 'a', 'quake', { tileId: id('로마') }); // 방패를 가진 아빠에게 막을지 물어봄 (방장은 바로잡기용으로 언제든)
+  assert.strictEqual(room.turn.awaitDefense.victim, 'b');
+  act(room, 'b', 'defend', { use: true });
   assert.strictEqual(room.players[1].card, null);
+  assert.ok(/방패 카드로 엄마의 지진 공격을 막았어요/.test(room.log[room.log.length - 1].text));
   act(room, 'a', 'draw', { pick: pick('goStart') });
   assert.strictEqual(room.players[0].pos, 0);
 });
@@ -583,4 +586,19 @@ test('랜드마크: 4번째 턴부터 빌라·빌딩·호텔과 함께 한 번�
   assert.throws(() => act(room, 'a', 'buy', { tileId: id('뉴욕'), items: ['villa', 'landmark'] }), /빌라·빌딩·호텔/);
   room.players[1].laps = 2;
   assert.throws(() => act(room, 'b', 'buy', { tileId: id('뉴욕'), items: ['villa', 'building', 'hotel', 'landmark'] }), /3번째 턴/);
+});
+
+test('앱 모드: 공격받은 사람은 다른 사람 차례라도 방어 카드를 쓸지 고름, 안 쓰면 공격이 들어감', () => {
+  const room = appRoom(); // 아빠(b) 차례, 방장은 엄마(a)
+  room.props[id('로마')] = { owner: 'a', built: { villa: true }, visits: 0 };
+  room.players[0].card = 'angel';
+  room.players[1].use = 'quake';
+  room.turn.rolled = true;
+  act(room, 'b', 'quake', { tileId: id('로마') });
+  assert.strictEqual(room.turn.awaitDefense.victim, 'a');
+  assert.ok(room.props[id('로마')].built.villa); // 아직 안 들어감
+  assert.throws(() => act(room, 'b', 'endTurn'), /고르는 중/);
+  act(room, 'a', 'defend', { use: false });
+  assert.ok(!room.props[id('로마')].built.villa); // 지진이 들어감
+  assert.strictEqual(room.players[0].card, 'angel'); // 천사는 그대로
 });

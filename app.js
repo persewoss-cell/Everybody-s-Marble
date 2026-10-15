@@ -130,7 +130,7 @@
   }
 
   // 앱으로만 하는 방: 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
-  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'blockAttack', 'passCard', 'timer', 'addBot'];
+  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'blockAttack', 'passCard', 'timer', 'addBot', 'defend'];
   // 앱 + 실물(컴퓨터 함께) 방의 사람: 차례 중간에 하는 일이면 끝낼지 묻지 않음
   // (월급·매각·송금·보석금·세계여행 비용은 그 뒤에 칸에서 할 일이 남음)
   const midTurn = (a) => ['salary', 'sell', 'transfer', 'useEscape', 'passCard', 'blockAttack'].includes(a.type)
@@ -157,7 +157,7 @@
       if (!acted) return;
     }
     if (!freeTurn() && (!t.rolled || m.pendingCard || (m.travel && !t.rolled))) return;
-    if (t.owe || t.mustDraw || m.use) return; // 통행료·세금·포춘카드가 남았으면 차례 표시줄 버튼으로
+    if (t.owe || t.mustDraw || m.use || t.awaitDefense) return; // 통행료·세금·포춘카드·상대 방어 선택이 남았으면
     if ($modal.querySelector('#endask')) return;
     if ($modal.innerHTML || anim.busy || anim.queue.length) {
       endTimer = setTimeout(() => askEndTurn(tries + 1, title), 600);
@@ -1036,6 +1036,11 @@
     bindTurnBar();
     if (m.pendingCard && !$modal.innerHTML) keepPrompt();
     if (!m.bankrupt) blockPrompt();
+    if (!m.bankrupt) defendPrompt();
+    // 내가 공격한 상대가 막을지 고르고 나면, 이어서 차례 끝을 물어봄
+    const waitingDef = !!(state.turn && state.turn.awaitDefense && state.turn.pid === m.id);
+    if (wasWaitingDef && !waitingDef) scheduleEnd();
+    wasWaitingDef = waitingDef;
     if (!m.bankrupt) botDrawPrompt();
     if (!m.bankrupt) syncPrompt();
     if (!m.bankrupt) myTurnPrompt();
@@ -1570,7 +1575,8 @@
     const endOk = t.rolled && !t.again && !t.owe && !t.mustDraw && !m.pendingCard && !mustDonate;
     if (mine) btns.push(`<button class="btn small" id="tend" ${endOk ? '' : 'disabled'}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
-    const note = !mine ? (cur.bot ? '🤖 컴퓨터가 진행하는 중...' : '')
+    const note = t.awaitDefense ? `${esc(player(t.awaitDefense.victim).name)}님이 ${G.CARD[t.awaitDefense.card].name} 카드를 쓸지 고르는 중...`
+      : !mine ? (cur.bot ? '🤖 컴퓨터가 진행하는 중...' : '')
       : t.owe === 'toll' ? '통행료를 내야 차례를 끝낼 수 있어요'
       : t.owe === 'tax' ? '세금을 내야 차례를 끝낼 수 있어요'
       : t.mustDraw ? '포춘카드를 뽑으세요'
@@ -1591,7 +1597,8 @@
     if (mine) btns.push(`<button class="btn small accent" id="tend" ${t.again || t.awaitSync ? 'disabled' : ''}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
     const sync = t.awaitSync;
-    const note = sync ? `🤖 ${esc(player(sync.bot).name)} 결과를 실물 게임판에 반영하고 확인을 눌러 주세요`
+    const note = t.awaitDefense ? `${esc(player(t.awaitDefense.victim).name)}님이 ${G.CARD[t.awaitDefense.card].name} 카드를 쓸지 고르는 중...`
+      : sync ? `🤖 ${esc(player(sync.bot).name)} 결과를 실물 게임판에 반영하고 확인을 눌러 주세요`
       : w ? `${esc(player(w.victim).name)}님이 방패·천사 카드로 막을지 고르는 중...`
       : mine && t.again ? '더블! 한 번 더 굴려요'
       : mine ? '실물 주사위로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
@@ -1747,6 +1754,27 @@
         rollDice();
       };
     });
+  }
+
+  // 내 도시가 공격받았고 앱에 방패·천사가 있으면: 다른 사람 차례라도 쓸지 고르기
+  let defendAsked = '';
+  let wasWaitingDef = false;
+  function defendPrompt() {
+    const w = state.turn && state.turn.awaitDefense;
+    if (!w || w.victim !== session.playerId || animPending()) return;
+    const key = JSON.stringify([w.attacker, w.type, w.tile, state.nextTxId]);
+    if (defendAsked === key) return;
+    if ($modal.innerHTML && !$modal.querySelector('#defy')) return setTimeout(() => state && defendPrompt(), 600);
+    defendAsked = key;
+    const att = player(w.attacker);
+    const card = G.CARD[w.card];
+    openModal(`<h3>⚔️ ${esc(att.name)}${att.bot ? ' 🤖' : ''}의 공격</h3>
+      <p><b>${esc(G.TILE[w.tile].name)}</b>에 <b>${esc(G.CARD[w.type].name)}</b>! <span class="muted">(${esc(G.CARD[w.type].desc)})</span></p>
+      <div class="sub">보관 중인 <b>${card.name}</b> 카드로 막을까요? 막으면 카드는 반납돼요.</div>
+      <div class="row"><button class="btn secondary" id="defn">안 막을래요</button><button class="btn accent" id="defy">${w.card === 'shield' ? '🛡️' : '😇'} ${card.name}로 막기</button></div>`, (root) => {
+      root.querySelector('#defy').onclick = () => run({ type: 'defend', use: true }, { keepOpen: true });
+      root.querySelector('#defn').onclick = () => run({ type: 'defend', use: false }, { keepOpen: true });
+    }, { lock: () => { const x = state.turn && state.turn.awaitDefense; return !!x && x.victim === w.victim && x.tile === w.tile && x.type === w.type; } });
   }
 
   // 컴퓨터가 내 도시를 공격: 실물 방패·천사 카드가 있으면 막기
