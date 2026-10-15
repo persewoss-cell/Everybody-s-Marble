@@ -800,7 +800,7 @@ const actions = {
     p.use = null;
     if (p.pendingCard) p.pendingCard = null;
     nextTurn(room);
-    record(room, actorId, 'turn', `${p.name} 차례 끝${note} → ${pname(room, room.turn.pid)} 차례`, {}, before);
+    tag(record(room, actorId, 'turn', `${p.name} 차례 끝${note} → ${pname(room, room.turn.pid)} 차례`, {}, before), { ended: p.id });
   },
 
   // 포춘카드 뽑기 (pick: 0~1 난수 → 남은 카드 중 하나)

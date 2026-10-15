@@ -69,12 +69,13 @@
   const ICON = { land: '🚩', villa: '🏠', building: '🏢', hotel: '🏨', landmark: '🗼' };
   const TOUR_ICON = ['🚩', '⛱️', '🛖'];
 
-  function toast(msg, cls) {
+  function toast(msg, cls, ms, html) {
     const el = document.createElement('div');
     el.className = 'toast ' + (cls || '');
-    el.textContent = msg;
+    if (html) el.innerHTML = msg;
+    else el.textContent = msg;
     $toasts.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+    setTimeout(() => el.remove(), ms || 3000);
   }
   function vibrate(ms) {
     try { navigator.vibrate && navigator.vibrate(ms); } catch {}
@@ -257,7 +258,22 @@
     // 내 동작이 아직 확정 전이면, 그 동작이 들어간 상태가 올 때까지 미리 계산한 화면을 유지
     if (!(pending && s.nextTxId < predictedNext)) adopt(s);
     if (!firstState) {
+      // 차례를 관리하는 방: 다른 사람·컴퓨터 차례가 끝나면 그 차례에 한 일을 요약해서 알림 (거래마다 알리지 않음)
+      const managedTurns = s.mode === 'app' || s.withBots;
+      if (managedTurns) {
+        for (const tx of s.log) {
+          if (tx.id <= lastSeenTx || tx.undone) continue;
+          const ended = tx.kind === 'turn' ? tx.info && tx.info.ended : tx.kind === 'bankrupt' ? tx.info && tx.info.who : null;
+          if (!ended || ended === session.playerId) continue;
+          const msg = turnSummary(s, tx, ended);
+          if (!msg) continue;
+          const show = () => toast(msg, 'plus summary', 6500, true);
+          if (heldState) heldToasts.push(show);
+          else show();
+        }
+      }
       for (const tx of s.log) {
+        if (managedTurns) break;
         if (tx.id <= lastSeenTx || tx.actorId === session.playerId || tx.kind === 'start') continue;
         const d = tx.deltas[session.playerId];
         if (d) {
@@ -276,6 +292,59 @@
     if (firstState) anim.seen = lastSeenTx; // 들어오기 전 장면은 다시 보여 주지 않음
     firstState = false;
     render();
+  }
+
+  // 한 사람의 차례 요약: '🎲 도쿄 · 통행료 20만→나 · 서울 땅+빌라 구입 · 💰 -32만'
+  function turnSummary(st, endTx, pid) {
+    const who = st.players.find((p) => p.id === pid);
+    if (!who) return '';
+    const i = st.log.indexOf(endTx);
+    const txs = [];
+    for (let j = i - (endTx.kind === 'turn' ? 1 : 0); j >= 0; j--) {
+      const x = st.log[j];
+      if (x.kind === 'turn' || x.kind === 'start' || (x.kind === 'info' && /^순서:/.test(x.text))) break;
+      if (x.actorId === pid && !x.undone) txs.unshift(x);
+    }
+    const nm = (id) => { const x = st.players.find((p) => p.id === id); return x ? esc(x.name) : ''; };
+    const T = (id) => esc((G.TILE[id] || {}).name || '');
+    const short = (t) => esc(t.replace(who.name, '').replace(/^\s*[·:]?\s*/, '').replace(/\s*[-+]\d[\d만천 ]*$/, '').trim());
+    const parts = [];
+    let net = 0;
+    let mine = 0;
+    for (const x of txs) {
+      net += x.deltas[pid] || 0;
+      mine += x.deltas[session.playerId] || 0;
+      const info = x.info || {};
+      switch (x.kind) {
+        case 'roll':
+          if (/무인도 탈출 실패/.test(x.text)) parts.push('🏝️ 무인도 탈출 실패');
+          else if (/더블 3번/.test(x.text)) parts.push('🎲 더블 3번 → 🏝️ 무인도');
+          else if (x.to !== undefined) parts.push(`${/✈️/.test(x.text) ? '✈️' : '🎲'} ${esc(G.SPACES[x.to].name)}${x.to === G.POS.island ? ' (무인도)' : ''}`);
+          break;
+        case 'fortune':
+          parts.push(`🃏 ${esc(G.CARD[x.card].name)}${x.to !== undefined && x.to !== x.from ? ` → ${esc(G.SPACES[x.to].name)}` : ''}`);
+          break;
+        case 'buy': parts.push(`🚩 ${T(info.tile)} ${info.items && info.items.length ? `땅+${info.items.map((k) => G.ITEM_NAMES[k]).join('+')}` : '구입'}`); break;
+        case 'build': parts.push(`🏠 ${T(info.tile)} ${info.items.map((k) => G.ITEM_NAMES[k]).join('+')}`); break;
+        case 'takeover': parts.push(`🤝 ${T(info.tile)} 인수`); break;
+        case 'sell': parts.push(`🏚️ ${T(info.tile)} 매각`); break;
+        case 'olympic': parts.push(`🏅 ${T(info.tile)} 올림픽`); break;
+        case 'toll': {
+          const to = Object.keys(x.deltas).find((k) => k !== pid && x.deltas[k] > 0);
+          parts.push(`💸 통행료 ${fmt(-(x.deltas[pid] || 0))}→${to === session.playerId ? '<b>나</b>' : nm(to)}`);
+          break;
+        }
+        case 'pay': parts.push(/세금/.test(x.text) ? '🧾 세금' : /보석금/.test(x.text) ? '🏝️ 보석금' : short(x.text)); break;
+        case 'bonus': parts.push(`🪙 ${short(x.text).replace('보너스 게임 ', '보너스 ')}`); break;
+        case 'card': parts.push(`🃏 ${short(x.text)}`); break;
+        case 'bankrupt': parts.push('☠️ 파산'); break;
+        case 'salary': break; // 월급은 돈 변화에 들어감
+        default: break;
+      }
+    }
+    if (!parts.length && !net) return '';
+    const money = net ? `💰 ${net > 0 ? '+' : ''}${fmt(net)} → ${fmt(who.money)}` : `💰 ${fmt(who.money)}`;
+    return `<b>${who.bot ? '🤖 ' : ''}${esc(who.name)}</b>: ${parts.join(' · ')}${parts.length ? ' · ' : ''}${money}${mine ? ` · <b>나 ${mine > 0 ? '+' : ''}${fmt(mine)}</b>` : ''}`;
   }
 
   // ---------- 화면 공통 ----------
@@ -1076,12 +1145,18 @@
       openModal(`${head}
         ${t.kind === 'city' && here ? `<div class="buildbox"><div class="sub">같이 지을 건물</div>${buildChecks(t, null)}</div>` : ''}
         ${priceTable(t)}
+        ${here ? `<div class="mymoney">💰 내 돈 <b>${fmt(m.money)}</b> → 사고 나면 <b id="left"></b></div>` : ''}
         <div class="err" id="err"></div>
         ${here ? '' : '<div class="sub center">말이 이 칸에 도착하면 살 수 있어요.</div>'}
         <div class="row"><button class="btn secondary" data-close>닫기</button>${here ? '<button class="btn accent" id="buy">구매 <span id="pv"></span></button>' : ''}</div>`, (root) => {
         if (!here) return;
         const total = () => (t.kind === 'tour' ? G.TOUR_PRICE : t.cost.land + checked(root).reduce((s, k) => s + t.cost[k], 0));
-        const upd = () => (root.querySelector('#pv').textContent = fmt(total()));
+        const upd = () => {
+          root.querySelector('#pv').textContent = fmt(total());
+          const left = root.querySelector('#left');
+          left.textContent = fmt(m.money - total());
+          left.className = m.money - total() < 0 ? 'minus' : '';
+        };
         root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = () => { syncLandmark(root, null); upd(); }));
         syncLandmark(root, null);
         upd();
@@ -1103,11 +1178,21 @@
         ${priceTable(t)}
         <div class="preview"><span>지금 통행료</span><b>${fmt(toll.amount)}</b></div>
         ${toll.parts.length ? `<div class="sub">${toll.parts.join(' · ')}</div>` : ''}
+        ${checks ? `<div class="mymoney">💰 내 돈 <b>${fmt(m.money)}</b> → 짓고 나면 <b id="left"></b></div>` : ''}
         <div class="err" id="err"></div>
         <div class="row">${t.kind === 'tour' && canArrive ? '' : '<button class="btn secondary" data-close>닫기</button>'}
           ${canArrive ? `<button class="btn ${t.kind === 'tour' ? 'accent' : 'secondary'}" id="arrive">${t.tour === 'beach' ? '⛱️ 도착 · 방문 +1' : '도착 (효과 해제)'}</button>` : ''}
           ${checks ? '<button class="btn accent" id="build">건설 <span id="pv"></span></button>' : ''}</div>`, (root) => {
-        const upd = () => { const el = root.querySelector('#pv'); if (el) el.textContent = fmt(checked(root).reduce((s, k) => s + t.cost[k], 0)); };
+        const upd = () => {
+          const cost = checked(root).reduce((s, k) => s + t.cost[k], 0);
+          const el = root.querySelector('#pv');
+          if (el) el.textContent = fmt(cost);
+          const left = root.querySelector('#left');
+          if (left) {
+            left.textContent = fmt(m.money - cost);
+            left.className = m.money - cost < 0 ? 'minus' : '';
+          }
+        };
         root.querySelectorAll('[data-item]').forEach((c) => (c.onchange = () => { syncLandmark(root, pr); upd(); }));
         syncLandmark(root, pr);
         upd();
@@ -1639,16 +1724,21 @@
   function myTurnPrompt() {
     const t = state.turn;
     const m = me();
-    if (!turnsOn() || state.phase !== 'turns' || !t || !m || m.bot || m.bankrupt || t.pid !== m.id || t.rolled || t.awaitSync) return;
+    if (!turnsOn() || state.phase !== 'turns' || !t || !m || m.bot || m.bankrupt || t.pid !== m.id || t.awaitSync) return;
+    const again = t.rolled && t.again;
+    if (t.rolled && !again) return;
+    if (again && (!canRoll() || autoNext)) return; // 도착한 칸에서 할 일(구입·통행료·카드 등)을 먼저
     let k = 0;
     for (let i = state.log.length - 1; i >= 0; i--) {
       const x = state.log[i];
-      if (x.kind === 'turn' || (x.kind === 'info' && /^순서:/.test(x.text))) { k = x.id; break; }
+      if (x.kind === 'turn' || (x.kind === 'info' && /^순서:/.test(x.text)) || (again && x.kind === 'roll')) { k = x.id; break; }
     }
-    const key = `${t.pid}:${k}`;
+    const key = `${t.pid}:${k}:${again ? 'again' : ''}`;
     if (turnShown === key || animPending() || $modal.innerHTML) return;
     turnShown = key;
-    openModal(`<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
+    openModal(again ? `<div class="myturn center"><h3>🎲 더블이에요!</h3><div class="sub">한 번 더 굴려요.</div></div>
+      <div class="row"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="goroll">🎲 주사위 굴리기</button></div>`
+      : `<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
       <div class="sub">${state.mode === 'app' && G.canTravelNow(state, m) && m.money >= G.TRAVEL ? '세계여행! 갈 도시를 고르거나(차례 표시줄의 ✈️ 버튼), 안 가고 주사위를 굴려요.'
         : m.jail > 0 && state.mode === 'app' ? '무인도에 있어요. 더블이 나오면 탈출해요.' : freeTurn() ? '실물 주사위를 굴려도 되고, 앱 주사위를 굴려도 돼요.' : '주사위를 굴려 출발하세요.'}</div></div>
       <div class="row"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="goroll">🎲 주사위 굴리기</button></div>`, (root) => {
@@ -1916,6 +2006,7 @@
       askOnClose = true;
       if (!$modal.innerHTML) scheduleEnd(endTitle);
       endTitle = null;
+      setTimeout(() => { if (state && state.status === 'playing' && !$modal.innerHTML) myTurnPrompt(); }, 300); // 더블이면 '한 번 더'
     }
     playNext();
   }
