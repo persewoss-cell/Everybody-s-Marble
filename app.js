@@ -184,7 +184,7 @@
   function endMyTurn() {
     const t = state.turn;
     const m = me();
-    if (!realMode() || !t || !t.start || t.free || !m || t.pid !== m.id) return run({ type: 'endTurn' });
+    if (!realMode() || !t || !t.start || !m || t.pid !== m.id) return run({ type: 'endTurn' });
     try {
       G.applyAction(G.roomFromPublic(state), m.id, { type: 'endTurn' }); // 아직 끝낼 수 없으면 여기서 바로 알림
     } catch (e) {
@@ -1783,6 +1783,8 @@
     const travel = !again && G.canTravelNow(state, m) && m.money >= G.TRAVEL;
     const realBtn = realMode() ? '<button class="btn secondary" id="goreal">🎲 실물 주사위 입력</button>' : '';
     const close = '<button class="btn secondary" data-close>닫기</button>';
+    // 앱 + 실물: 주사위 대신 게임판에서 칸을 직접 골라 진행
+    const mapBtn = realMode() ? '<div class="row"><button class="btn secondary" id="gomap">🗺️ 지도에서 직접 선택</button></div>' : '';
     let html;
     if (jail) {
       html = `<div class="myturn center"><h3>🏝️ 무인도 — ${m.jail}차례 남음</h3>
@@ -1791,15 +1793,15 @@
         <div class="row"><button class="btn secondary" id="gobail" ${m.money < G.BAIL ? 'disabled' : ''}>💰 탈출하기 <small>-${fmt(G.BAIL)}</small></button>
           ${m.card === 'escape' ? '<button class="btn secondary" id="goesc">🎫 탈출 카드 쓰기</button>' : ''}</div>
         ${m.money < G.BAIL ? `<div class="sub center">보석금 ${fmt(G.BAIL)}이 모자라요.</div>` : ''}
-        <div class="row">${close}</div>`;
+        ${mapBtn}<div class="row">${close}</div>`;
     } else if (again) {
       html = `<div class="myturn center"><h3>🎲 더블이에요!</h3><div class="sub">한 번 더 굴려요.</div></div>
         <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>`;
     } else {
       html = `<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
         <div class="sub">${travel ? '세계여행! 갈 도시를 고르거나(차례 표시줄의 ✈️ 버튼), 안 가고 주사위를 굴려요.'
-          : realMode() ? '앱 주사위를 굴리거나, 실물 주사위를 굴렸다면 숫자를 입력하세요.' : '주사위를 굴려 출발하세요.'}</div></div>
-        <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>`;
+          : realMode() ? '앱 주사위를 굴리거나, 실물 주사위를 굴렸다면 숫자를 입력하세요. 실물로 직접 옮겼다면 지도에서 칸을 골라요.' : '주사위를 굴려 출발하세요.'}</div></div>
+        <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>${mapBtn}`;
     }
     openModal(html, (root) => {
       root.querySelector('#goroll').onclick = () => {
@@ -1807,6 +1809,10 @@
         rollDice();
       };
       if (root.querySelector('#goreal')) root.querySelector('#goreal').onclick = () => realDiceDialog();
+      if (root.querySelector('#gomap')) root.querySelector('#gomap').onclick = () => {
+        closeModal();
+        toast('게임판에서 말이 도착한 칸을 눌러 주세요.');
+      };
       if (root.querySelector('#gobail')) root.querySelector('#gobail').onclick = () => run({ type: 'pay', what: 'bail' });
       if (root.querySelector('#goesc')) root.querySelector('#goesc').onclick = () => run({ type: 'useEscape' });
     });
