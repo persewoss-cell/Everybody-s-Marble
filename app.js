@@ -174,9 +174,27 @@
       return;
     }
     askOnClose = false;
+    // 앱 + 실물: 실물 게임판에 옮길 것이 있으면 한 창에서 같이 (반영했어요 · 차례 끝)
+    const steps = syncSteps();
+    if (steps.length) return endTurnModal(title || '차례를 끝낼까요?', steps);
     openModal(`<h3 id="endask">${title || '차례를 끝낼까요?'}</h3><div class="sub">할 일을 다 했으면 다음 사람 차례로 넘겨요.</div>
       <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="yes">차례 끝</button></div>`, (root) => {
       root.querySelector('#yes').onclick = endMyTurn;
+    });
+  }
+  // 이번 내 차례에 실물 게임판에서 바뀐 것 (앱 + 실물 방)
+  function syncSteps() {
+    const t = state.turn;
+    const m = me();
+    return realMode() && t && t.start && m && t.pid === m.id ? boardChanges({ start: t.start }, m) : [];
+  }
+  function endTurnModal(title, steps) {
+    openModal(`<h3 id="endask">${title}</h3>
+      <div class="sub">📋 실물 게임판에 옮겨 주세요. 반영하고 차례를 끝내요.</div>
+      <ol class="steps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>
+      <div class="err" id="err"></div>
+      <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="synced">반영했어요 · 차례 끝</button></div>`, (root) => {
+      root.querySelector('#synced').onclick = () => run({ type: 'endTurn' });
     });
   }
 
@@ -191,15 +209,9 @@
       closeModal();
       return handleError(e, { type: 'endTurn' });
     }
-    const steps = boardChanges({ start: t.start }, m);
+    const steps = syncSteps();
     if (!steps.length) return run({ type: 'endTurn' });
-    openModal(`<h3>📋 실물 게임판에 옮겨 주세요</h3>
-      <div class="sub">이번 차례 결과예요. 실제 보드판에 반영하고 차례를 끝내요.</div>
-      <ol class="steps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>
-      <div class="err" id="err"></div>
-      <div class="row"><button class="btn secondary" data-close>아직이요</button><button class="btn accent" id="synced">반영했어요 · 차례 끝</button></div>`, (root) => {
-      root.querySelector('#synced').onclick = () => run({ type: 'endTurn' });
-    });
+    endTurnModal('📋 실물 게임판에 옮겨 주세요', steps);
   }
 
   function handleError(e, action, o) {
