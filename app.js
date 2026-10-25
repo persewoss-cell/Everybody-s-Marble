@@ -2067,9 +2067,10 @@
     const who = state.players.find((p) => p.id === tx.actorId);
     const name = who ? who.name : '';
     try {
-      if (tx.dice) await showDice(name, tx.dice, who);
+      // 실물 주사위 숫자를 입력한 경우: 주사위 장면 없이 바로 그 칸으로
+      if (tx.dice && !tx.real) await showDice(name, tx.dice, who);
       if (tx.card) await showCard(name, tx.card);
-      if (tx.to !== undefined && tx.from !== undefined && tx.to !== tx.from) await walk(tx.actorId, tx.from, tx.to, tx.jump);
+      if (tx.to !== undefined && tx.from !== undefined && tx.to !== tx.from) await walk(tx.actorId, tx.from, tx.to, tx.jump || tx.real);
     } finally {
       anim.busy = false;
       anim.current = null;
