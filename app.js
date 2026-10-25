@@ -60,6 +60,10 @@
     const t = state && state.turn;
     return state && state.phase === 'turns' && t && t.pid === session.playerId ? t : null;
   };
+  // 앱 + 실물 방: 주사위 대신 칸을 직접 골라 거래하는 차례 (닫기 버튼 있음, 앱은 돈만 계산)
+  // freeNow: 지금 직접 할 수 있음 (주사위 굴리기 전이거나 이미 직접 진행 중), freeTurn: 직접 진행 중
+  const freeNow = () => { const t = myTurn(); return realMode() && !!t && (!!t.free || (!t.rolled && !t.awaitSync)); };
+  const freeTurn = () => { const t = myTurn(); return realMode() && !!t && !!t.free; };
   // 이번 차례에 말이 도착한 칸인지
   const landed = (t, pos) => !!t && t.spot === pos && (me().pos || 0) === pos;
   const did = (t, k) => !!(t && t.did && t.did[k]);
@@ -127,12 +131,14 @@
     }
     salaryNotice(fromTx);
     p.catch((e) => handleError(e, action, o));
-    if (!NO_END_ASK.includes(action.type)) scheduleEnd();
+    if (!NO_END_ASK.includes(action.type) && !(freeTurn() && midTurn(action))) scheduleEnd();
     return true;
   }
 
   // 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
   const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'passCard', 'timer', 'addBot', 'defend', 'useEscape'];
+  // 직접 진행 중: 차례 중간에 하는 일이면 끝낼지 묻지 않음 (월급·매각·송금·보석금·세계여행 비용 뒤엔 칸에서 할 일이 남음)
+  const midTurn = (a) => ['salary', 'sell', 'transfer', 'move'].includes(a.type) || (a.type === 'pay' && a.what !== 'tax');
   // 한 번에 하나만 기다리도록 타이머 하나로 관리
   let endTimer = null;
   let askOnClose = false; // 도착·포춘카드 뒤 뜬 창을 닫으면 차례 끝을 물어봄
@@ -147,7 +153,7 @@
     const m = me();
     if (!m || !t || t.pid !== m.id) return;
     if (t.again) return; // 더블이면 한 번 더 굴려야 함
-    if (!t.rolled || m.pendingCard) return;
+    if ((!t.rolled && !t.free) || m.pendingCard) return;
     if (t.owe || t.mustDraw || m.use || t.awaitDefense) return; // 통행료·세금·포춘카드·상대 방어 선택이 남았으면
     if ($modal.querySelector('#endask')) return;
     if ($modal.innerHTML || anim.busy || anim.queue.length) {
@@ -165,7 +171,7 @@
   function endMyTurn() {
     const t = state.turn;
     const m = me();
-    if (!realMode() || !t || !t.start || !m || t.pid !== m.id) return run({ type: 'endTurn' });
+    if (!realMode() || !t || !t.start || t.free || !m || t.pid !== m.id) return run({ type: 'endTurn' });
     try {
       G.applyAction(G.roomFromPublic(state), m.id, { type: 'endTurn' }); // 아직 끝낼 수 없으면 여기서 바로 알림
     } catch (e) {
@@ -976,8 +982,11 @@
     const m = me();
     const host = isHost();
     const undoTx = G.lastUndoable(state);
-    const canUndo = undoTx && host;
-    const acts = [['sell', '🏚️', '매각'], ['fortune', '🃏', '포춘카드']];
+    const canUndo = undoTx && (host || (freeTurn() && undoTx.actorId === m.id));
+    const acts = freeNow()
+      // 직접 진행: 보석금·국세청·세계여행·올림픽·보너스·포춘카드는 게임판의 그 칸을 누르면 됨
+      ? [['salary', '🏁', '월급 30만'], ['transfer', '💸', '송금'], ['sell', '🏚️', '매각']]
+      : [['sell', '🏚️', '매각'], ['fortune', '🃏', '포춘카드']];
     const tt = myTurn();
     // 무인도: 주사위 옆에 바로 탈출 (보석금·탈출 카드)
     const jailNow = !!tt && m.jail > 0 && !tt.rolled && !tt.awaitSync;
@@ -998,7 +1007,7 @@
           ${jailNow && m.card === 'escape' ? '<button class="btn secondary" id="esc">🎫 탈출 카드</button>' : ''}
           <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
         ${m.bankrupt ? '' : `<div class="actions app">${acts.map(([a, ic, label]) => `<button class="act" data-a="${a}">${ic}<span>${label}</span></button>`).join('')}</div>`}
-        <div class="sub center">칸을 누르면 가격·통행료를 볼 수 있어요</div>
+        <div class="sub center">${freeTurn() ? '직접 진행 중: 말이 도착한 칸을 누르세요' : freeNow() ? '주사위를 굴리거나, 직접 하려면 말이 도착한 칸을 누르세요' : '칸을 누르면 가격·통행료를 볼 수 있어요'}</div>
       </section>
       <section class="g-players">
         <div class="card">
@@ -1086,8 +1095,13 @@
     </table>`;
   }
 
-  function buildChecks(t, pr) {
+  // 직접 진행: 이 칸이 지금 말 위치보다 앞(번호가 작음)이면 출발지를 지나온 것 → 거래할 때 월급 자동, 턴 +1
+  function passesStart(t) {
     const m = me();
+    return freeNow() && t.pos !== G.POS.start && t.pos < (m.pos || 0);
+  }
+  function buildChecks(t, pr) {
+    const m = passesStart(t) ? { ...me(), laps: me().laps + 1 } : me();
     const built = (pr && pr.built) || {};
     const list = G.BUILDINGS.filter((k) => !built[k]);
     if (!list.length) return '';
@@ -1129,12 +1143,15 @@
     const m = me();
     if (m.bankrupt) return;
     const owner = pr && player(pr.owner);
+    const free = freeNow();
     const head = `<h3><span class="dot" style="background:${tileColor(t)}"></span> ${esc(t.name)}
       <small>${t.kind === 'tour' ? (t.tour === 'island' ? '섬 관광지' : '해변 관광지') : G.GROUPS[t.group].name + ' 도시'} ${tileBadges(t)}</small></h3>
-      <div class="sub sheethead">${owner ? `주인 <b>${esc(owner.name)}</b> ${builtIcons(t)}` : '주인 없음'}</div>`;
-    // 말이 도착한 칸에서만 사고·짓고·낼 수 있음 (다른 칸은 정보만)
+      <div class="sub sheethead">${owner ? `주인 <b>${esc(owner.name)}</b> ${builtIcons(t)}` : '주인 없음'}
+        ${free ? `<button class="btn small secondary" data-move="${t.pos}">📍 내 말 여기로</button>` : ''}</div>
+      ${passesStart(t) ? `<div class="sub passnote">🏁 출발지를 지나왔다면 여기서 거래할 때 월급 ${fmt(G.SALARY)}이 자동으로 들어오고 ${m.laps + 2}번째 턴이 돼요.</div>` : ''}`;
+    // 말이 도착한 칸에서만 사고·짓고·낼 수 있음 (다른 칸은 정보만). 직접 진행이면 어느 칸이든
     const tt = myTurn();
-    const here = landed(tt, t.pos);
+    const here = free || landed(tt, t.pos);
 
     // 빈 땅 → 구매
     if (!pr) {
@@ -1205,7 +1222,7 @@
     const canTake = t.kind === 'city' && !pr.built.landmark;
     // 도착해서 내야 할 때만 '통행료 내기' (닫기·✕ 없음), 아니면 정보만
     const owe = () => { const x = myTurn(); return !!x && x.owe === 'toll' && landed(x, t.pos); };
-    if (!owe()) {
+    if (!free && !owe()) {
       const toll = G.tollInfo(state, t.id);
       const take = canTake && !!tt && tt.paid === t.id && landed(tt, t.pos);
       openModal(`${head}${priceTable(t)}
@@ -1219,10 +1236,10 @@
     openModal(`${head}${priceTable(t)}
       <div class="preview"><span>낼 통행료</span><b id="pv"></b></div>
       <div class="sub" id="parts"></div>
-      <div class="checks">${m.card === 'angel' ? '<label class="check"><input type="checkbox" id="angel"> 😇 천사 카드 (면제)</label>' : '<input type="checkbox" id="angel" hidden>'}
-        ${m.card === 'coupon' ? '<label class="check"><input type="checkbox" id="coupon"> 🎫 할인쿠폰 (50%)</label>' : '<input type="checkbox" id="coupon" hidden>'}</div>
+      <div class="checks">${free || m.card === 'angel' ? '<label class="check"><input type="checkbox" id="angel"> 😇 천사 카드 (면제)</label>' : '<input type="checkbox" id="angel" hidden>'}
+        ${free || m.card === 'coupon' ? '<label class="check"><input type="checkbox" id="coupon"> 🎫 할인쿠폰 (50%)</label>' : '<input type="checkbox" id="coupon" hidden>'}</div>
       <div class="err" id="err"></div>
-      <div class="row"><button class="btn accent" id="pay">${esc(owner.name)}에게 통행료 내기</button></div>
+      <div class="row">${free ? '<button class="btn secondary" data-close>닫기</button>' : ''}<button class="btn accent" id="pay">${esc(owner.name)}에게 통행료 내기</button></div>
       <div class="sub center">${canTake ? `통행료를 낸 뒤 인수할 수 있어요 (${fmt(G.takeoverPrice(state, t.id))})` : t.kind === 'tour' ? '관광지는 인수할 수 없어요' : '랜드마크가 있어 인수할 수 없어요'}</div>`, (root) => {
       const opts = () => ({ angel: root.querySelector('#angel').checked, coupon: root.querySelector('#coupon').checked });
       const upd = () => {
@@ -1236,7 +1253,7 @@
       root.querySelector('#pay').onclick = () => {
         if (run({ type: 'toll', tileId: t.id, ...opts() }, { creditor: owner.id }) && canTake) takeoverAsk(t);
       };
-    }, { lock: owe });
+    }, free ? null : { lock: owe });
   }
 
   function takeoverAsk(t) {
@@ -1272,6 +1289,23 @@
   function specialSheet(pos) {
     const sp = G.SPACES[pos];
     if (me().bankrupt) return;
+    if (freeNow()) {
+      const BTN = {
+        start: ['🏁 월급 받기', () => ACTIONS.salary(pos), '출발지에 도착하면 내 도시 한 곳에 건물을 세울 수 있어요. 그 도시 칸을 눌러 건설하세요.'],
+        bonus: ['🪙 보너스 게임', () => ACTIONS.bonus(), '코인 앞뒤 맞히기 — 연속 1·2·3회 성공 시 40·80·160만'],
+        island: [`🏝️ 보석금 ${fmt(G.BAIL)} 내고 탈출`, () => ACTIONS.bail(), '3차례 동안 이동할 수 없어요. 더블, 보석금, 무인도 탈출 카드로 나올 수 있어요.'],
+        card: ['🃏 포춘카드', () => { run({ type: 'move', to: pos }, { keepOpen: true }); fortuneDialog(); }, '포춘카드를 뒤집고 미션을 수행하세요.'],
+        olympic: [`🏅 올림픽 개최 (${fmt(G.OLYMPIC_COST)})`, () => ACTIONS.olympic(pos), '내 도시 한 곳에 올림픽을 열 수 있어요.'],
+        travel: [`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}`, () => ACTIONS.travel(), '다음 차례에 비용을 내고 원하는 도시로 가서 사거나 지을 수 있어요. 출발지를 지나면 월급도 받아요.'],
+        tax: [`🧾 세금 ${fmt(G.TAX)} 내기`, () => ACTIONS.tax(), '세금이 부족하면 도시를 매각해서 내요.'],
+      }[sp.key];
+      openModal(`<h3>${sp.icon} ${sp.name}</h3>
+        <div class="sub sheethead">${BTN[2]}<button class="btn small secondary" data-move="${pos}">📍 내 말 여기로</button></div>
+        <div class="row mt"><button class="btn secondary" data-close>닫기</button><button class="btn accent" id="go">${BTN[0]}</button></div>`, (root) => {
+        root.querySelector('#go').onclick = BTN[1];
+      });
+      return;
+    }
     const t = myTurn();
     const at = landed(t, pos);
     const m = me();
@@ -1304,6 +1338,25 @@
   const shieldNote = () => '상대가 방패나 천사 카드를 갖고 있으면 막을지 상대가 골라요.';
 
   const ACTIONS = {
+    salary(at) {
+      openModal(`<h3>🏁 출발지를 지나 월급 받기</h3>
+        <label class="check"><input type="checkbox" id="boost"> 💰 월급 부스터 카드 사용 (2배)</label>
+        <div class="sub">월급을 받으면 다음 턴이 돼요 (턴 제한: 첫 턴 빌라 → 빌딩 → 호텔 → 자유).</div>
+        <div class="row"><button class="btn secondary" data-close>취소</button><button class="btn accent" id="ok">받기</button></div>`, (root) => {
+        root.querySelector('#ok').onclick = () => run({ type: 'salary', booster: root.querySelector('#boost').checked, ...(Number.isInteger(at) ? { at } : {}) });
+      });
+    },
+    tax: () => confirmBox(`🧾 국세청 세금 ${fmt(G.TAX)}을 낼까요?`, { type: 'pay', what: 'tax' }, '내기'),
+    travel: () => confirmBox(`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}을 낼까요?\n출발지를 지나가면 월급도 받으세요.`, { type: 'pay', what: 'travel' }, '내기'),
+    transfer() {
+      const list = others();
+      let to = null;
+      const chips = playerChips(list, null).replace('<div class="chips">', '<div class="chips"><button class="chip" data-p="bank">🏦 은행</button>');
+      amountDialog('💸 송금', chips, '보내기', (amount, root) => {
+        if (!to) return (root.querySelector('#err').textContent = '받는 사람을 골라 주세요.');
+        run({ type: 'transfer', to, amount });
+      }, (root) => bindChoice(root, 'p', (v) => (to = v)));
+    },
     bail: () => confirmBox(`🏝️ 무인도 보석금 ${fmt(G.BAIL)}을 내고 탈출할까요?`, { type: 'pay', what: 'bail' }, '내기'),
     olympic(at) {
       pickTile('🏅 올림픽을 개최할 내 도시', `개최비용 ${fmt(G.OLYMPIC_COST)}. 올림픽은 한 곳에만 — 같은 도시는 ×3·×4·×5로, 다른 도시는 마크를 옮겨 ×2`, (t) => t.kind === 'city' && mineF(t), (id) => run({ type: 'olympic', tileId: id, ...(Number.isInteger(at) ? { at } : {}) }));
@@ -1317,7 +1370,8 @@
         <div class="chips big">${['도전 안 함·실패', '1회 40만', '2회 80만', '3회 160만'].map((l, i) => `<button class="chip" data-w="${i}">${l}</button>`).join('')}</div>`, (root) => {
         root.querySelectorAll('[data-w]').forEach((b) => (b.onclick = () => run({ type: 'bonus', wins: Number(b.dataset.w) })));
         root.querySelector('#coin').onclick = coinGame;
-      }, { lock: bonusLock });
+        if (freeNow()) root.querySelector('.chips.big').insertAdjacentHTML('afterend', '<button class="btn secondary wide mt" data-close>취소</button>');
+      }, freeNow() ? null : { lock: bonusLock });
     },
     fortune: () => fortuneDialog(),
     sell() {
@@ -1362,6 +1416,30 @@
 
   // 포춘카드 칸에 도착했을 때 랜덤 뽑기 (앱 + 실물 방은 실물 카드를 뽑아 골라도 됨). 카드 목록은 설명만
   function fortuneDialog() {
+    // 직접 진행: 랜덤으로 뽑거나 실물로 뽑은 카드를 고르면 앱이 그 카드대로 (닫기 있음)
+    if (freeNow() && !(myTurn() && myTurn().mustDraw)) {
+      const left = G.deck(state);
+      openModal(`<h3>🃏 포춘카드</h3>
+        <div class="sub">남은 카드 ${left.length}장 · 랜덤으로 뽑거나, 실물 카드를 뽑았다면 아래에서 고르세요</div>
+        <button class="btn accent wide" id="draw">🎴 랜덤 뽑기</button>
+        ${CARDS.map(([group, list]) => `<div class="sub">${group}</div><div class="cards">${list.map(([name, tier, desc]) => {
+          const c = G.FORTUNE.find((f) => f[1] === name);
+          const k = c ? c[0] : '';
+          return `<button class="fcard ${tier}" data-k="${k}" ${left.includes(k) ? '' : 'disabled'}><b>${name}</b><small>${desc}</small></button>`;
+        }).join('')}</div>`).join('')}
+        <div class="err" id="err"></div>
+        <button class="btn secondary wide" data-close>닫기</button>`, (root) => {
+        root.querySelector('#draw').onclick = () => {
+          autoNext = true;
+          run({ type: 'draw', pick: Math.random() });
+        };
+        root.querySelectorAll('[data-k]').forEach((b) => (b.onclick = () => {
+          autoNext = true;
+          run({ type: 'draw', key: b.dataset.k });
+        }));
+      });
+      return;
+    }
     const mustDraw = () => { const t = myTurn(); return !!t && t.mustDraw && !me().bankrupt; };
     const can = mustDraw();
     openModal(`<h3>🃏 포춘카드</h3>
@@ -1534,7 +1612,7 @@
       btns.push(`<button class="btn small accent" id="tuse">🃏 ${G.CARD[m.use].name} 쓰기</button>`);
       if (!mustDonate) btns.push('<button class="btn small secondary" id="tpass">사용 안 함</button>');
     }
-    const endOk = t.rolled && !t.again && !t.owe && !t.mustDraw && !m.pendingCard && !mustDonate && !t.awaitSync && !t.awaitDefense;
+    const endOk = (t.rolled || t.free) && !t.again && !t.owe && !t.mustDraw && !m.pendingCard && !mustDonate && !t.awaitSync && !t.awaitDefense;
     if (mine) btns.push(`<button class="btn small" id="tend" ${endOk ? '' : 'disabled'}>차례 끝</button>`);
     else if (isHost()) btns.push('<button class="btn small secondary" id="tend">차례 넘기기</button>');
     const sync = t.awaitSync;
@@ -1550,7 +1628,9 @@
       : travelNow ? '세계여행! 갈 도시를 고르거나, 안 가고 주사위를 굴려요'
       : m.travel ? '세계여행 도착! 다음 차례에 갈 도시를 골라요'
       : m.jail > 0 && !t.rolled ? `무인도 (${m.jail}차례 남음): 더블·보석금·탈출 카드로 나와요`
-      : t.again ? '더블! 한 번 더 굴려요' : t.rolled ? '할 일을 마치면 차례 끝' : '주사위를 굴리세요';
+      : t.again ? '더블! 한 번 더 굴려요'
+      : t.free ? '직접 진행 중: 실물로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
+      : t.rolled ? '할 일을 마치면 차례 끝' : realMode() ? '주사위를 굴리세요 (직접 하려면 칸을 누르세요)' : '주사위를 굴리세요';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
       <b>${mine ? '내 차례' : `${esc(cur.name)} 차례`}</b><span class="muted">${note}</span><span class="grow"></span>${btns.join('')}</div>`;
   }
@@ -1832,6 +1912,7 @@
     if (m.pendingCard) return keepPrompt();
     switch (key) {
       case 'sponsor':
+        if (freeTurn()) return run({ type: 'sponsor' }) && notice('🎁 후원금', '모두에게서 후원금을 받았어요. (10만이 없는 사람은 가진 만큼)');
         return notice('🎁 후원금', '모두에게서 후원금을 받았어요. (10만이 없는 사람은 가진 만큼)');
       case 'epidemic': return attack('epidemic', '😷 전염병', (t) => t.kind === 'city');
       case 'alien': return attack('alien', '👽 외계인 침공', (t) => t.kind === 'city');
@@ -1905,7 +1986,7 @@
         ${wins ? `<button class="btn secondary wide" id="stop">그만하고 ${fmt(G.BONUS[wins - 1])} 받기</button>` : '<button class="btn secondary wide" id="stop">도전 안 함</button>'}`, (root) => {
         if (root.querySelector('#stop')) root.querySelector('#stop').onclick = () => finish();
         root.querySelectorAll('[data-g]').forEach((b) => (b.onclick = () => flip(root, b.dataset.g)));
-      }, { lock: bonusLock });
+      }, freeNow() ? null : { lock: bonusLock });
     };
     const flip = async (root, guess) => {
       root.querySelectorAll('button').forEach((b) => (b.disabled = true));
@@ -2272,7 +2353,7 @@
       <b>매각</b> 통행료·세금이 부족할 때만. 매각비용(건설비용 절반)을 은행에서.<br>
       <b>특수칸</b> 국세청 20만 · 무인도 보석금 20만 · 올림픽 개최 10만(한 곳에만) · 세계여행 10만 · 보너스 게임 40/80/160만.<br>
       <b>차례 진행 (두 방 모두)</b> 시작하면 주사위로 순서를 정해요(높은 사람부터, 같으면 다시). 내 차례에 주사위 → 말이 한 칸씩 이동 → 도착한 칸 화면이 열려요. 더블이면 한 번 더, 세 번 연속 더블이면 무인도. 무인도는 3차례 쉬고 더블·보석금·탈출 카드로 나와요. 세계여행 칸에 서면 다음 차례에 주사위 대신 10만 내고 원하는 도시로 가서 사거나 짓기 (안 가고 주사위를 굴려도 됨, 더블로 도착했으면 지금 가거나 한 번 더). 남의 땅이면 통행료, 국세청이면 세금, 포춘카드 칸이면 카드를 꼭 처리해야 차례를 끝낼 수 있어요. 보관 카드(천사·할인쿠폰·방패·무인도 탈출·월급 부스터)는 1장만, 공격을 받으면 방패·천사로 막을지 직접 골라요.<br>
-      <b>🎲 앱 + 실물 방</b> 주사위는 앱으로 굴리거나 실물 주사위 두 개의 숫자를 입력해요. 포춘카드는 랜덤으로 뽑거나 실물 카드를 뽑아 골라요. 차례를 끝낼 때 실물 게임판에 옮길 것(말 위치·깃발·건물·마크)을 알려 주고, 컴퓨터 차례가 끝나면 모두에게 알려 줘요.<br>
+      <b>🎲 앱 + 실물 방</b> 주사위(앱 또는 실물 숫자 입력)로 하면 앱 버전과 똑같이 진행돼요. 주사위 대신 칸을 직접 눌러 거래하면 그 차례는 직접 진행(창마다 닫기, 월급·송금 버튼)이에요. 포춘카드는 랜덤으로 뽑거나 실물 카드를 뽑아 골라요. 차례를 끝낼 때 실물 게임판에 옮길 것(말 위치·깃발·건물·마크)을 알려 주고, 컴퓨터 차례가 끝나면 모두에게 알려 줘요.<br>
       <b>승리</b> 트리플 독점(컬러독점 3곳) · 라인 독점 · 관광지 독점 · 나머지 모두 파산 · 시간 종료 시 총자산(마블 + 땅·건물·랜드마크 건설비용) 1등.
       </div><div class="row mt"><a class="btn secondary" href="rulebook.pdf" download="모두의마블_보조앱_룰북.pdf" target="_blank">📖 룰북 PDF 받기</a>
       <button class="btn secondary" data-close>닫기</button></div>`);

@@ -606,3 +606,28 @@ test('앱 + 실물: 사람도 꼭 해야 하는 일(통행료·무인도·더블
   assert.ok(room.turn.again);
   assert.throws(() => act(room, 'a', 'endTurn'), /더블/);
 });
+
+test('앱 + 실물: 주사위 대신 칸을 직접 골라 거래하면 그 차례는 직접 진행 (전처럼 자유롭게)', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.addPlayer(room, '아빠', 'b');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
+  act(room, 'a', 'start');
+  room.festival = [];
+  act(room, 'a', 'orderRoll', { sum: 3 });
+  act(room, 'b', 'orderRoll', { sum: 11 });
+  room.props[id('베이징')] = { owner: 'a', built: {}, visits: 0 };
+  act(room, 'b', 'buy', { tileId: id('서울') }); // 굴리지 않고 직접
+  assert.ok(room.turn.free);
+  assert.strictEqual(room.players[1].pos, 31);
+  act(room, 'b', 'toll', { tileId: id('베이징'), coupon: true }); // 출발지를 지나 → 월급 자동, 실물 쿠폰
+  assert.strictEqual(room.players[1].laps, 1);
+  act(room, 'b', 'transfer', { to: 'a', amount: M });
+  act(room, 'b', 'endTurn'); // 굴리지 않아도 끝낼 수 있음
+  assert.strictEqual(room.turn.pid, 'a');
+  assert.ok(!room.turn.free);
+  assert.throws(() => act(room, 'b', 'buy', { tileId: id('파리') }), /엄마님 차례/);
+  // 실패한 동작이면 직접 진행으로 바뀌지 않음
+  room.players[0].money = 0;
+  assert.throws(() => act(room, 'a', 'buy', { tileId: id('파리') }));
+  assert.ok(!room.turn.free);
+});
