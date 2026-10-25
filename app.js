@@ -114,8 +114,21 @@
   }
 
   // 버튼 동작 실행: 미리 계산이 되면 창을 바로 닫고, 결과는 뒤에서 확정
+  // 직접 진행으로 바뀌는 동작 (주사위 굴리기 전에 칸을 직접 골라 거래)
+  const FREE_START = ['buy', 'build', 'arrive', 'toll', 'takeover', 'pay', 'salary', 'transfer', 'move', 'olympic', 'bonus', 'draw', 'sponsor',
+    'epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
   function run(action, opts) {
     const o = opts || {};
+    // 무인도에 있는데 직접 진행으로 바꾸려 하면 실수일 수 있어 먼저 물어봄
+    const m = state && me();
+    if (!o.jailOk && freeNow() && !freeTurn() && m && m.jail > 0 && FREE_START.includes(action.type) && !(action.type === 'pay' && action.what === 'bail')) {
+      openModal(`<h3>🏝️ 무인도에 있어요</h3>
+        <div class="sub">지금 직접 하면 이번 차례는 직접 진행이 되고, 무인도에서 나온 것으로 처리돼요 (남은 ${m.jail}차례 쉼 없어짐). 실물에서 무인도를 나왔을 때만 직접 하세요.</div>
+        <div class="row"><button class="btn secondary" data-close>취소</button><button class="btn accent" id="jok">직접 할게요</button></div>`, (root) => {
+        root.querySelector('#jok').onclick = () => { closeModal(); if (run(action, { ...o, jailOk: true }) && o.then) o.then(); };
+      });
+      return false;
+    }
     const fromTx = state ? state.nextTxId : 0;
     const shown = $modal.firstElementChild; // 동작 중에 새로 뜬 창(방장 기기는 바로 반영돼 차례 알림 등)은 닫지 않음
     let p;
@@ -1294,7 +1307,7 @@
         start: ['🏁 월급 받기', () => ACTIONS.salary(pos), '출발지에 도착하면 내 도시 한 곳에 건물을 세울 수 있어요. 그 도시 칸을 눌러 건설하세요.'],
         bonus: ['🪙 보너스 게임', () => ACTIONS.bonus(), '코인 앞뒤 맞히기 — 연속 1·2·3회 성공 시 40·80·160만'],
         island: [`🏝️ 보석금 ${fmt(G.BAIL)} 내고 탈출`, () => ACTIONS.bail(), '3차례 동안 이동할 수 없어요. 더블, 보석금, 무인도 탈출 카드로 나올 수 있어요.'],
-        card: ['🃏 포춘카드', () => { run({ type: 'move', to: pos }, { keepOpen: true }); fortuneDialog(); }, '포춘카드를 뒤집고 미션을 수행하세요.'],
+        card: ['🃏 포춘카드', () => { if (run({ type: 'move', to: pos }, { keepOpen: true, then: fortuneDialog })) fortuneDialog(); }, '포춘카드를 뒤집고 미션을 수행하세요.'],
         olympic: [`🏅 올림픽 개최 (${fmt(G.OLYMPIC_COST)})`, () => ACTIONS.olympic(pos), '내 도시 한 곳에 올림픽을 열 수 있어요.'],
         travel: [`✈️ 세계여행 비용 ${fmt(G.TRAVEL)}`, () => ACTIONS.travel(), '다음 차례에 비용을 내고 원하는 도시로 가서 사거나 지을 수 있어요. 출발지를 지나면 월급도 받아요.'],
         tax: [`🧾 세금 ${fmt(G.TAX)} 내기`, () => ACTIONS.tax(), '세금이 부족하면 도시를 매각해서 내요.'],

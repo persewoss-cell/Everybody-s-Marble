@@ -1572,7 +1572,8 @@ function applyAction(room, actorId, action) {
   if (me && !me.bot && !appMode(room) && room.status === 'playing' && room.phase === 'turns' && t && t.pid === me.id && !t.rolled && !t.free
     && (FREE_START.includes(action.type) || ATTACKS.includes(action.type)) && !(action.type === 'pay' && action.what === 'bail')) {
     t.free = true;
-    freed = true;
+    freed = { jail: me.jail || 0 };
+    me.jail = 0; // 직접 진행이면 무인도 규칙 없이 (실물에서 나온 것으로)
   }
   const app = !!me && managed(room, me);
   let saved = null;
@@ -1592,7 +1593,10 @@ function applyAction(room, actorId, action) {
       for (const k of Object.keys(room)) delete room[k];
       Object.assign(room, saved);
     }
-    if (freed && room.turn) delete room.turn.free;
+    if (freed && room.turn) {
+      delete room.turn.free;
+      me.jail = freed.jail;
+    }
     throw e;
   }
   if (app) afterRules(room, me, action);

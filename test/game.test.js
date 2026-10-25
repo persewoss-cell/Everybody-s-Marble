@@ -631,3 +631,18 @@ test('앱 + 실물: 주사위 대신 칸을 직접 골라 거래하면 그 차�
   assert.throws(() => act(room, 'a', 'buy', { tileId: id('파리') }));
   assert.ok(!room.turn.free);
 });
+
+test('앱 + 실물: 무인도에서 직접 진행하면 무인도에서 나온 것으로', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.addPlayer(room, '아빠', 'b');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
+  act(room, 'a', 'start');
+  act(room, 'a', 'orderRoll', { sum: 3 });
+  act(room, 'b', 'orderRoll', { sum: 11 });
+  Object.assign(room.players[1], { pos: 8, jail: 3, money: 0 });
+  assert.throws(() => act(room, 'b', 'buy', { tileId: id('발리') }));
+  assert.strictEqual(room.players[1].jail, 3); // 안 된 동작이면 그대로
+  room.players[1].money = 200 * M;
+  act(room, 'b', 'buy', { tileId: id('발리') });
+  assert.strictEqual(room.players[1].jail, 0);
+});
