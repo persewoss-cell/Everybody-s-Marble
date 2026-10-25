@@ -266,7 +266,9 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .me .bal small { font-size: 13px; opacity: .85; }
 .me.bankrupt { background: #666; }
 .turnbar { margin: 0; }
-.ctrl .btn { padding: 9px 6px; font-size: 14px; }
+.ctrl { flex-wrap: wrap; }
+.ctrl .btn { padding: 9px 6px; font-size: 14px; min-width: 28%; }
+.ctrl .btn small { font-size: 11px; opacity: .85; }
 .ctrl #dice { flex: 1.6; }
 
 .actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }

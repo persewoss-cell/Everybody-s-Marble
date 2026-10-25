@@ -272,13 +272,12 @@ function travelTarget(st, p, reserve) {
 
 function next(st, pid) {
   const p = st.players.find((x) => x.id === pid);
-  if (!p || !p.bot || p.bankrupt || st.status !== 'playing' || (st.mode !== 'app' && !st.withBots)) return null;
+  if (!p || !p.bot || p.bankrupt || st.status !== 'playing') return null;
   if (st.phase === 'order') return st.orderRolls[pid] === null ? act({ type: 'orderRoll', dice: [d6(), d6()] }, 3200) : null;
   const t = st.turn;
   if (!t || t.pid !== pid) return null;
-  if (t.awaitBlock) return null; // 공격받은 사람이 방패를 쓸지 고르는 중
-  if (t.awaitSync) return null;
-  if (t.awaitDefense) return null; // 공격받은 사람이 방패·천사를 쓸지 고르는 중 // 앞 컴퓨터 결과를 사람이 실물 게임판에 반영하는 중
+  if (t.awaitSync) return null; // 앞 컴퓨터 결과를 사람이 실물 게임판에 반영하는 중
+  if (t.awaitDefense) return null; // 공격받은 사람이 방패·천사를 쓸지 고르는 중
   const key = `${st.code}:${pid}:${landId(st)}`;
   const reserve = reserveOf(st, p);
 

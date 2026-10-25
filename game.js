@@ -527,13 +527,13 @@ function moveTo(room, p, to, deltas, salary) {
 function appMode(room) {
   return room.mode === 'app';
 }
-// 차례를 관리하는 방: 앱으로만 하는 방, 또는 컴퓨터가 함께하는 앱 + 실물 방
-function turnsOn(room) {
-  return appMode(room) || !!room.withBots;
+// 차례를 관리하는 방: 두 모드 모두 (앱 + 실물 방도 통행료·세금·무인도 등 꼭 해야 하는 일은 앱이 규칙대로)
+function turnsOn() {
+  return true;
 }
-// 앱이 규칙대로 진행하는 사람: 앱으로만 하는 방은 모두, 앱 + 실물 방은 컴퓨터만 (사람은 실물로 자유롭게)
-function managed(room, p) {
-  return appMode(room) || !!(p && p.bot);
+// 앱이 규칙대로 진행하는 사람: 모두 (앱 + 실물 방은 실물 주사위·실물 포춘카드를 입력할 수 있는 것만 다름)
+function managed() {
+  return true;
 }
 function requireTurn(room, p) {
   if (turnsOn(room) && room.phase === 'turns' && room.turn && room.turn.pid !== p.id) {
@@ -553,8 +553,9 @@ function nextTurn(room) {
     room.turn.awaitSync = { bot: was.id, start: prev.start };
   }
 }
+// 앱 + 실물 방: 차례 시작 때 게임판 (차례가 끝나면 실물 게임판에 옮길 것을 알려 주는 데 씀)
 function markStart(room) {
-  if (!room.withBots || !room.turn) return;
+  if (appMode(room) || !room.turn) return;
   room.turn.start = JSON.parse(JSON.stringify({
     props: room.props, effects: room.effects, olympic: room.olympic, tx: room.nextTxId,
     pos: Object.fromEntries(room.players.map((p) => [p.id, p.pos || 0])),
@@ -687,7 +688,8 @@ const actions = {
     const deltas = {};
     const from = p.pos || 0;
     const skip = noTravel ? (p.money < TRAVEL ? '세계여행 비용이 모자라 주사위로 이동 · ' : '세계여행 안 함 · ') : '';
-    let text = `${skip}${p.name} 🎲 ${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
+    const real = !appMode(room) && !!a.real; // 앱 + 실물: 실물 주사위 숫자를 입력함
+    let text = `${skip}${p.name} 🎲 ${real ? '실물 주사위 ' : ''}${d1}+${d2} = ${sum}${dbl ? ' 더블!' : ''}`;
     if (noTravel) p.travel = false;
     if (app) {
       t.rolled = true;
@@ -697,7 +699,7 @@ const actions = {
         if (!dbl) {
           p.jail--;
           const tx = record(room, actorId, 'roll', `${text} · 무인도 탈출 실패 (남은 ${p.jail}차례)`, {}, before);
-          Object.assign(tx, { dice: a.dice, from, to: from });
+          Object.assign(tx, { dice: a.dice, from, to: from, ...(real ? { real } : {}) });
           return;
         }
         p.jail = 0;
@@ -710,23 +712,7 @@ const actions = {
           p.jail = JAIL_TURNS;
           land(room, p);
           const tx = record(room, actorId, 'roll', `${text} · 더블 3번! 무인도로 즉시 이동`, {}, before);
-          Object.assign(tx, { dice: a.dice, from, to: POS.island, jump: true });
-          return;
-        }
-        t.again = true;
-      }
-    }
-    // 컴퓨터가 있는 앱 + 실물 방에서 사람이 앱 주사위를 쓰면: 더블이면 한 번 더 (세 번이면 무인도)
-    const free = !app && turnsOn(room) && room.phase === 'turns' && t && t.pid === p.id;
-    if (free) {
-      t.rolled = true;
-      t.again = false;
-      if (dbl) {
-        t.doubles = (t.doubles || 0) + 1;
-        if (t.doubles >= 3) {
-          p.pos = POS.island;
-          const tx = record(room, actorId, 'roll', `${text} · 더블 3번! 무인도로 즉시 이동`, {}, before);
-          Object.assign(tx, { dice: a.dice, from, to: POS.island, jump: true });
+          Object.assign(tx, { dice: a.dice, from, to: POS.island, jump: true, ...(real ? { real } : {}) });
           return;
         }
         t.again = true;
@@ -735,7 +721,6 @@ const actions = {
     const to = (from + sum) % SPACES.length;
     text += moveTo(room, p, to, deltas);
     text += ` → ${SPACES[to].name}`;
-    if (free && to === POS.island) t.again = false;
     if (app && to === POS.island) {
       p.jail = JAIL_TURNS;
       t.again = false;
@@ -747,7 +732,7 @@ const actions = {
     }
     land(room, p);
     const tx = record(room, actorId, 'roll', text, deltas, before);
-    Object.assign(tx, { dice: a.dice, from, to });
+    Object.assign(tx, { dice: a.dice, from, to, ...(real ? { real } : {}) });
   },
 
   // 세계여행: 비용 10만 내고 원하는 칸으로 (출발지를 지나면 월급)
@@ -786,14 +771,13 @@ const actions = {
     const t = room.turn;
     if (t.pid !== actorId && room.hostId !== actorId) throw new GameError('본인 차례만 끝낼 수 있어요.');
     const p = getPlayer(room, t.pid);
-    const host = actorId === room.hostId;
-    if (!host && !p.bankrupt && managed(room, p)) {
+    const host = actorId === room.hostId && actorId !== t.pid; // 방장이 남의 차례를 넘김 (내 차례는 규칙대로)
+    if (!host && !p.bankrupt) {
       if (!t.rolled) throw new GameError('먼저 주사위를 굴려 주세요.');
       if (t.again) throw new GameError('더블! 한 번 더 굴려요.');
       if (p.use && !(p.use === 'donate' && canDonate(room, p.id))) p.use = null; // 쓸 수 없는 카드는 그냥 버림
       mustFinish(room, p);
     }
-    if (!host && !p.bankrupt && !managed(room, p) && t.again) throw new GameError('더블! 한 번 더 굴려요.');
     const before = snapshot(room);
     let note = '';
     if (host && actorId !== t.pid && (t.owe || t.mustDraw || p.use)) note = ' (방장이 넘김)';
@@ -927,29 +911,6 @@ const actions = {
     actions.draw(room, bot.id, a.key ? { key: a.key } : { pick: a.pick });
   },
 
-  // 앱 + 실물 방: 컴퓨터가 내 도시를 공격했을 때, 실물 방패·천사 카드가 있으면 막기 (또는 그냥 두기)
-  blockAttack(room, actorId, a) {
-    requirePlaying(room);
-    const t = room.turn;
-    const w = t && t.awaitBlock;
-    if (!w || (w.victim !== actorId && actorId !== room.hostId)) throw new GameError('막을 공격이 없어요.');
-    const victim = pname(room, w.victim);
-    if (!a.block) {
-      delete t.awaitBlock;
-      record(room, actorId, 'info', `${victim} 공격을 막지 않음`, {});
-      return;
-    }
-    const tx = room.log.find((x) => x.id === w.txId);
-    if (!tx || !tx.before || tx.undone) throw new GameError('이미 지난 공격이에요.');
-    const pos = Object.fromEntries(room.players.map((p) => [p.id, p.pos]));
-    Object.assign(room, JSON.parse(JSON.stringify(tx.before)));
-    for (const p of room.players) if (pos[p.id] !== undefined) p.pos = pos[p.id];
-    tx.undone = true;
-    if (room.turn) delete room.turn.awaitBlock;
-    const used = a.card === 'angel' ? '천사' : a.card === 'shield' ? '방패' : '방패·천사';
-    record(room, actorId, 'card', `${victim}이(가) ${used} 카드로 공격을 막았어요 (${tx.text})`, {});
-  },
-
   // 무인도 탈출 카드 사용
   useEscape(room, actorId) {
     requirePlaying(room);
@@ -963,18 +924,13 @@ const actions = {
     record(room, actorId, 'card', `${p.name} 무인도 탈출 카드 사용`, {}, before);
   },
 
-  // 말 옮기기 (돈 거래 없음). 앱 + 실물 방은 내 말을 기록 없이,
-  // 앱으로만 하는 방은 방장이 잘못을 바로잡을 때만 (누구 말이든, 기록 남김)
+  // 말 옮기기 (돈 거래 없음): 방장이 잘못을 바로잡을 때만 (누구 말이든, 기록 남김)
   move(room, actorId, a) {
     requirePlaying(room);
     const target = a.playerId && a.playerId !== actorId ? (requireHost(room, actorId), a.playerId) : actorId;
     const p = activePlayer(room, target);
     const to = toInt(a.to, '칸');
     if (to < 0 || to >= SPACES.length) throw new GameError('알 수 없는 칸입니다.');
-    if (!managed(room, p)) {
-      p.pos = to;
-      return;
-    }
     const before = snapshot(room);
     const from = p.pos || 0;
     p.pos = to;
@@ -1434,9 +1390,9 @@ function attackTarget(room, actorId, a, opt) {
   if (opt.city && tile.kind !== 'city') throw new GameError('일반도시를 골라 주세요.');
   if (opt.noLandmark) noLandmark(tile, prop, opt.noLandmark);
   const owner = getPlayer(room, prop.owner);
-  // 상대가 방패·천사를 보관 중이면 (앱이 카드를 아는 경우: 앱으로만 하는 방, 또는 컴퓨터)
+  // 상대가 방패·천사를 보관 중이면
   const def = owner.card === 'shield' || owner.card === 'angel' ? owner.card : null;
-  if (def && !a.noDefense && (appMode(room) || owner.bot)) {
+  if (def && !a.noDefense) {
     if (owner.bot) {
       // 컴퓨터: 방패는 늘 쓰고, 천사는 큰 공격에만 (통행료 면제용으로 아껴 둠)
       if (def === 'shield' || !['dust', 'blackout', 'epidemic'].includes(a.type)) {
@@ -1456,26 +1412,19 @@ function attackTarget(room, actorId, a, opt) {
 }
 
 const TILE_ACTIONS = ['buy', 'build', 'arrive', 'toll', 'takeover'];
-function whereAt(a) {
-  if (TILE_ACTIONS.includes(a.type) && TILE[a.tileId]) return TILE[a.tileId].pos;
-  if (a.type === 'pay') return POS[{ bail: 'island', tax: 'tax', travel: 'travel' }[a.what]];
-  if (a.type === 'bonus') return POS.bonus;
-  if (Number.isInteger(a.at) && a.at >= 0 && a.at < SPACES.length) return a.at;
-  return null;
-}
 
-// 컴퓨터가 함께하는 앱 + 실물 방에서 사람이 남의 차례에도 할 수 있는 것
-const HUMAN_ANYTIME = ['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'undo', 'endTurn', 'passCard', 'blockAttack', 'botDraw', 'syncDone', 'defend'];
+// 컴퓨터 결과를 실물 게임판에 반영하기 전에는 다음 사람이 할 수 없는 것
+const TURN_ACTIONS = ['roll', 'travelTo', 'endTurn', 'draw', 'pay', 'useEscape', 'sell', ...TILE_ACTIONS, 'olympic', 'bonus', 'passCard'];
 const MANAGER_ACTIONS = ['defend', 'syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
-// 앱으로만 하는 방: 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
+// 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
 const HOST_FIX = '앱이 규칙대로 처리해요. 잘못된 게 있으면 방장에게 말해 주세요.';
 function checkRules(room, p, a) {
   const t = room.turn;
   const type = a.type;
-  if (['move', 'salary', 'transfer', 'sponsor', 'undo'].includes(type)) throw new GameError(`앱으로만 하는 방에서는 ${HOST_FIX}`);
-  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard', 'timer', 'defend'].includes(type)) return;
+  if (['move', 'salary', 'transfer', 'sponsor', 'undo'].includes(type)) throw new GameError(HOST_FIX);
+  if (['pickColor', 'orderRoll', 'keepCard', 'bankrupt', 'passCard', 'timer', 'defend', 'syncDone', 'botDraw'].includes(type)) return;
   if (room.status !== 'playing') return;
   if (room.phase !== 'turns' || !t) throw new GameError('먼저 순서를 정해요.');
   if (t.pid !== p.id) throw new GameError(`지금은 ${pname(room, t.pid)}님 차례예요.`);
@@ -1560,16 +1509,6 @@ function afterRules(room, p, a) {
   }
 }
 
-// 앱 + 실물: 말이 이번 칸으로 오면서 출발지를 지났는지 (말은 시계방향으로만 감)
-// 지났으면 월급을 자동으로 주고 턴을 올림 (월급 버튼·출발지 칸·무인도 탐험은 제외)
-function passedStart(room, me, action) {
-  if (managed(room, me) || !me || me.bankrupt || room.status !== 'playing') return false;
-  if (action.type === 'salary' || (action.type === 'move' && action.noSalary)) return false;
-  const to = action.type === 'move' ? toInt(action.to, '칸') : whereAt(action);
-  if (to === null || to === undefined || to === POS.start) return false;
-  return to < (me.pos || 0);
-}
-
 function applyAction(room, actorId, action) {
   if (!action || typeof action.type !== 'string' || !Object.prototype.hasOwnProperty.call(actions, action.type)) {
     throw new GameError('알 수 없는 동작입니다.');
@@ -1579,49 +1518,14 @@ function applyAction(room, actorId, action) {
     // 게임에 참여하지 않는 방장(선생님)은 관리 동작만
     if (actorId !== room.hostId || !MANAGER_ACTIONS.includes(action.type)) throw new GameError('플레이어를 찾을 수 없습니다.');
   }
-  const app = !!me && managed(room, me);
-  if (app && actorId !== room.hostId) checkRules(room, me, action);
-  // 컴퓨터가 함께하는 앱 + 실물 방: 사람도 거래는 자기 차례에만 (방장은 바로잡기용으로 언제든)
-  // 컴퓨터 결과를 실물에 반영하고 확인하기 전에는 다음 사람도 기다림
-  if (room.withBots && me && !app && actorId !== room.hostId && room.status === 'playing' && room.turn && room.turn.awaitSync
-    && room.turn.pid === me.id && ['endTurn', ...TILE_ACTIONS, 'roll', 'pay', 'sell', 'salary', 'transfer'].includes(action.type)) {
+  if (me && actorId !== room.hostId) checkRules(room, me, action);
+  // 앱 + 실물 방: 컴퓨터 결과를 실물 게임판에 반영하고 확인하기 전에는 다음 사람도 기다림
+  const t = room.turn;
+  if (me && room.status === 'playing' && t && t.awaitSync && t.pid === me.id && TURN_ACTIONS.includes(action.type)) {
     throw new GameError('먼저 컴퓨터 결과를 실물 게임판에 반영하고 확인을 눌러 주세요.');
   }
-  if (room.withBots && me && !app && actorId !== room.hostId && room.status === 'playing' && !HUMAN_ANYTIME.includes(action.type)) {
-    if (room.phase !== 'turns') throw new GameError('먼저 순서를 정해요.');
-    requireTurn(room, me);
-  }
-  // 공격 카드의 대상(도시 주인)
-  const victim = ATTACKS.includes(action.type) && action.type !== 'donate' && TILE[action.tileId] ? ownerOf(room, action.tileId) : null;
-  let saved = null;
-  if (passedStart(room, me, action)) {
-    // 동작이 안 되면(돈 부족 등) 월급도 없던 일로
-    saved = JSON.parse(JSON.stringify(room));
-    const before = snapshot(room);
-    me.laps++;
-    const tx = record(room, actorId, 'salary', `${me.name} 출발지 통과 월급 +${fmt(SALARY)} (자동) · ${me.laps + 1}번째 턴`, { [me.id]: SALARY }, before);
-    tx.auto = true;
-  }
-  try {
-    actions[action.type](room, actorId, action);
-  } catch (e) {
-    if (saved) {
-      for (const k of Object.keys(room)) delete room[k];
-      Object.assign(room, saved);
-    }
-    throw e;
-  }
-  if (app) afterRules(room, me, action);
-  // 칸에서 한 거래면 내 말을 그 칸으로 옮김 (앱으로만 하는 방은 말 위치를 앱이 관리)
-  if (room.withBots && me && me.bot && victim && victim !== me.id && room.turn && room.status === 'playing') {
-    const v = room.players.find((x) => x.id === victim);
-    const last = room.log[room.log.length - 1];
-    if (v && !v.bot && !v.bankrupt && last && last.actorId === me.id && last.kind === 'card' && last.before && !/막았어요/.test(last.text)) {
-      room.turn.awaitBlock = { victim, txId: last.id };
-    }
-  }
-  const at = whereAt(action);
-  if (me && !app && at !== null && room.status !== 'lobby') me.pos = at;
+  actions[action.type](room, actorId, action);
+  if (me) afterRules(room, me, action);
   room.updatedAt = Date.now();
 }
 

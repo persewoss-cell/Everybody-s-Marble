@@ -58,13 +58,14 @@ test('컴퓨터 추가는 방장만, 시작하면 남은 색', () => {
   assert.strictEqual(room.players[2].color, g.PIECES[2].color);
 });
 
-test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람은 자기 차례에만 거래, 컴퓨터 공격은 실물 방패로 막기', () => {
+test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람도 규칙대로(실물 주사위 입력), 컴퓨터 결과 반영 확인', () => {
   const room = g.createRoom('1', '엄마', 'a', 'mixed');
   g.addPlayer(room, '아빠', 'b');
   g.applyAction(room, 'a', { type: 'addBot' });
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'b', { type: 'pickColor', color: g.PIECES[1].color });
   g.applyAction(room, 'a', { type: 'start' });
+  room.festival = [];
   assert.strictEqual(room.withBots, true);
   assert.strictEqual(room.phase, 'order');
   const c = room.players[2];
@@ -73,22 +74,35 @@ test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람�
   g.applyAction(room, c.id, { type: 'orderRoll', dice: [3, 3] });
   assert.deepStrictEqual(room.order, ['a', c.id, 'b']);
   const id = (n) => g.BOARD.find((t) => t.name === n).id;
-  // 엄마 차례: 실물로 자유롭게, 아빠는 기다림
+  // 엄마 차례: 아빠는 기다림, 엄마도 주사위를 굴려 도착한 칸에서만
   assert.throws(() => g.applyAction(room, 'b', { type: 'buy', tileId: id('도쿄') }), /엄마님 차례/);
-  g.applyAction(room, 'a', { type: 'buy', tileId: id('도쿄'), items: ['villa'] });
-  g.applyAction(room, 'a', { type: 'endTurn' }); // 굴리지 않아도 끝낼 수 있음
+  assert.throws(() => g.applyAction(room, 'b', { type: 'buy', tileId: id('베이징') }), /엄마님 차례/);
+  assert.throws(() => g.applyAction(room, 'a', { type: 'endTurn' }), /주사위/);
+  g.applyAction(room, 'a', { type: 'roll', dice: [1, 2], real: true }); // 실물 주사위 숫자
+  assert.ok(room.log[room.log.length - 1].real);
+  assert.match(room.log[room.log.length - 1].text, /실물 주사위/);
+  assert.strictEqual(room.players[0].pos, 3);
+  assert.ok(room.turn.start); // 차례가 끝나면 실물 게임판에 옮길 것을 알려 주려고 시작 상태를 기억
+  g.applyAction(room, 'a', { type: 'buy', tileId: id('베이징'), items: ['villa'] });
+  g.applyAction(room, 'a', { type: 'endTurn' });
   assert.strictEqual(room.turn.pid, c.id);
-  // 컴퓨터가 엄마 도쿄를 지진으로 공격 → 엄마가 막을지 고를 때까지 기다림
+  // 컴퓨터가 엄마 베이징을 지진으로 공격 → 엄마가 방패를 쓸지 고를 때까지 기다림
+  room.players[0].card = 'shield';
   c.use = 'quake';
-  g.applyAction(room, c.id, { type: 'quake', tileId: id('도쿄') });
-  assert.ok(!room.props[id('도쿄')].built.villa);
-  assert.deepStrictEqual(room.turn.awaitBlock.victim, 'a');
+  room.turn.rolled = true;
+  g.applyAction(room, c.id, { type: 'quake', tileId: id('베이징') });
+  assert.strictEqual(room.turn.awaitDefense.victim, 'a');
   assert.strictEqual(bot.next(g.publicState(room), c.id), null);
-  assert.throws(() => g.applyAction(room, 'b', { type: 'blockAttack', block: true }), /막을 공격/);
-  g.applyAction(room, 'a', { type: 'blockAttack', block: true });
-  assert.ok(room.props[id('도쿄')].built.villa);
-  assert.ok(!room.turn.awaitBlock);
-  assert.ok(bot.next(g.publicState(room), c.id));
+  g.applyAction(room, 'a', { type: 'defend', use: true });
+  assert.ok(room.props[id('베이징')].built.villa);
+  assert.strictEqual(room.players[0].card, null);
+  // 컴퓨터 차례가 끝나면 실물에 반영하고 확인할 때까지 다음 사람(아빠)은 기다림 — 확인은 아무나
+  g.applyAction(room, c.id, { type: 'endTurn' });
+  assert.strictEqual(room.turn.pid, 'b');
+  assert.ok(room.turn.awaitSync);
+  assert.throws(() => g.applyAction(room, 'b', { type: 'roll', dice: [1, 2] }), /반영/);
+  g.applyAction(room, 'a', { type: 'syncDone' });
+  g.applyAction(room, 'b', { type: 'roll', dice: [1, 2] });
 });
 
 // 컴퓨터 차례로 만들고 그 칸에 도착한 상태
