@@ -1820,8 +1820,10 @@
     } else {
       html = `<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
         <div class="sub">${travel ? '세계여행! 갈 도시를 고르거나(차례 표시줄의 ✈️ 버튼), 안 가고 주사위를 굴려요.'
-          : realMode() ? '앱 주사위를 굴리거나, 실물 주사위를 굴렸다면 숫자를 입력하세요. 실물로 직접 옮겼다면 지도에서 칸을 골라요.' : '주사위를 굴려 출발하세요.'}</div></div>
-        <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>${mapBtn}`;
+          : realMode() ? '<span class="line">🎲 앱 주사위를 굴리거나, 실물 주사위 숫자를 입력해요.</span><span class="line">🗺️ 실물로 직접 옮겼다면 지도에서 칸을 골라요.</span>' : '주사위를 굴려 출발하세요.'}</div></div>
+        ${realMode() ? `<div class="row nowrap"><button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>
+          <div class="row nowrap"><button class="btn secondary" id="gomap">🗺️ 지도에서 직접 선택</button>${close}</div>`
+        : `<div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button></div>`}`;
     }
     openModal(html, (root) => {
       root.querySelector('#goroll').onclick = () => {
