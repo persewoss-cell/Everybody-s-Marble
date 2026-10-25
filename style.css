@@ -480,3 +480,5 @@ input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 .mymoney { background: var(--card); border-radius: 10px; padding: 7px 10px; margin: 6px 0; font-size: 14px; }
 .mymoney b { font-variant-numeric: tabular-nums; }
 .mymoney b.minus { color: var(--minus); }
+
+.myturn .warn { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: #fdecea; color: #c0392b; font-weight: 700; }

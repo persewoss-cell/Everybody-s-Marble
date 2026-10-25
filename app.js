@@ -1653,7 +1653,7 @@
       : travelNow ? '세계여행! 갈 도시를 고르거나, 안 가고 주사위를 굴려요'
       : m.travel ? '세계여행 도착! 다음 차례에 갈 도시를 골라요'
       : m.jail > 0 && !t.rolled ? `무인도 (${m.jail}차례 남음): 더블·보석금·탈출 카드로 나와요`
-      : t.again ? '더블! 한 번 더 굴려요'
+      : t.again ? (t.doubles >= 2 ? '더블 2번! 한 번 더 굴려요 (또 더블이면 무인도)' : '더블! 한 번 더 굴려요')
       : t.free ? '직접 진행 중: 실물로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
       : t.rolled ? '할 일을 마치면 차례 끝' : realMode() ? '주사위를 굴리세요 (직접 하려면 칸을 누르세요)' : '주사위를 굴리세요';
     return `<div class="card turnbar ${mine ? 'mine' : ''}"><span class="dot" style="background:${pc(cur)}"></span>
@@ -1776,6 +1776,7 @@
   // 사람 차례가 되면 그 사람에게만: '당신의 차례입니다' (주사위 굴리기 / 닫기)
   // 무인도면 주사위 / 보석금 탈출 / 탈출 카드, 더블이면 도착한 칸에서 할 일을 다 한 뒤 '한 번 더'
   let turnShown = '';
+  let turnTimer = null;
   function myTurnPrompt() {
     const t = state.turn;
     const m = me();
@@ -1790,7 +1791,13 @@
       if (x.kind === 'turn' || (x.kind === 'info' && /^순서:/.test(x.text)) || (again && x.kind === 'roll')) { k = x.id; break; }
     }
     const key = `${t.pid}:${k}:${again ? 'again' : ''}${jail ? 'jail' : ''}`;
-    if (turnShown === key || animPending() || $modal.innerHTML) return;
+    if (turnShown === key) return;
+    if (animPending() || $modal.innerHTML) {
+      // 장면·다른 창이 끝나면 다시 (도착한 칸 창·월급 알림 등을 닫은 뒤에 뜨게)
+      clearTimeout(turnTimer);
+      turnTimer = setTimeout(() => { if (state && state.status === 'playing' && !teacher) myTurnPrompt(); }, 700);
+      return;
+    }
     turnShown = key;
     const travel = !again && G.canTravelNow(state, m) && m.money >= G.TRAVEL;
     const realBtn = realMode() ? '<button class="btn secondary" id="goreal">🎲 실물 주사위 입력</button>' : '';
@@ -1807,7 +1814,8 @@
         ${m.money < G.BAIL ? `<div class="sub center">보석금 ${fmt(G.BAIL)}이 모자라요.</div>` : ''}
         ${mapBtn}<div class="row">${close}</div>`;
     } else if (again) {
-      html = `<div class="myturn center"><h3>🎲 더블이에요!</h3><div class="sub">한 번 더 굴려요.</div></div>
+      html = `<div class="myturn center"><h3>🎲 더블이에요!${t.doubles >= 2 ? ' (2번째)' : ''}</h3><div class="sub">한 번 더 굴려요.</div>
+        ${t.doubles >= 2 ? '<div class="warn">⚠️ 한 번 더 더블이 나오면 무인도로 이동해요!</div>' : ''}</div>
         <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>`;
     } else {
       html = `<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
