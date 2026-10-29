@@ -215,6 +215,7 @@
   }
 
   function handleError(e, action, o) {
+    autoNext = false; // 안 된 동작이면 도착 화면을 기다리지 않음
     const extra = (e && (e.extra || e.data)) || {};
     if (extra.code === 'INSUFFICIENT') return insufficient(action, extra, o || {});
     const el = $modal.querySelector('#err');
@@ -1783,7 +1784,12 @@
     if (state.phase !== 'turns' || !t || !m || m.bot || m.bankrupt || t.pid !== m.id || t.awaitSync || t.awaitDefense) return;
     const again = t.rolled && t.again;
     if (t.rolled && !again) return;
-    if (!canRoll() || autoNext) return; // 도착한 칸에서 할 일(구입·통행료·카드 등)을 먼저
+    const retry = () => {
+      clearTimeout(turnTimer);
+      turnTimer = setTimeout(() => { if (state && state.status === 'playing' && !teacher) myTurnPrompt(); }, 700);
+    };
+    // 도착한 칸에서 할 일(구입·통행료·카드 등)을 먼저 — 끝나면 다시 확인해서 꼭 띄움
+    if (!canRoll() || autoNext) return retry();
     const jail = m.jail > 0 && !t.rolled;
     let k = 0;
     for (let i = state.log.length - 1; i >= 0; i--) {
@@ -1792,14 +1798,12 @@
     }
     const key = `${t.pid}:${k}:${again ? 'again' : ''}${jail ? 'jail' : ''}`;
     if (turnShown === key) return;
-    if (animPending() || $modal.innerHTML) {
-      // 장면·다른 창이 끝나면 다시 (도착한 칸 창·월급 알림 등을 닫은 뒤에 뜨게)
-      clearTimeout(turnTimer);
-      turnTimer = setTimeout(() => { if (state && state.status === 'playing' && !teacher) myTurnPrompt(); }, 700);
-      return;
-    }
+    if (animPending() || $modal.innerHTML) return retry(); // 장면·다른 창이 끝나면 다시
     turnShown = key;
-    const travel = !again && G.canTravelNow(state, m) && m.money >= G.TRAVEL;
+    // 세계여행 칸에 도착한 다음 차례 (세계여행 초대장 포함): 팝업에 세계여행 버튼
+    const travel = !again && G.canTravelNow(state, m);
+    const poor = m.money < G.TRAVEL;
+    const travelBtn = travel ? `<div class="row"><button class="btn accent" id="gotravel" ${poor ? 'disabled' : ''}>✈️ 세계여행 <small>${poor ? `(${fmt(G.TRAVEL)}이 모자라요)` : `-${fmt(G.TRAVEL)}`}</small></button></div>` : '';
     const realBtn = realMode() ? '<button class="btn secondary" id="goreal">🎲 실물 주사위 입력</button>' : '';
     const close = '<button class="btn secondary" data-close>닫기</button>';
     // 앱 + 실물: 주사위 대신 게임판에서 칸을 직접 골라 진행
@@ -1819,18 +1823,20 @@
         <div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>`;
     } else {
       html = `<div class="myturn center"><h3><span class="dot" style="background:${pc(m)}"></span> 당신의 차례입니다</h3>
-        <div class="sub">${travel ? '세계여행! 갈 도시를 고르거나(차례 표시줄의 ✈️ 버튼), 안 가고 주사위를 굴려요.'
+        <div class="sub">${travel ? (poor ? `세계여행 비용(${fmt(G.TRAVEL)})이 모자라요. 주사위를 굴려 이동해요.` : '✈️ 세계여행! 10만을 내고 원하는 도시로 가거나, 안 가고 주사위를 굴려요.')
           : realMode() ? '<span class="line">🎲 앱 주사위를 굴리거나, 실물 주사위 숫자를 입력해요.</span><span class="line">🗺️ 실물로 직접 옮겼다면 지도에서 칸을 골라요.</span>' : '주사위를 굴려 출발하세요.'}</div></div>
-        ${realMode() ? `<div class="row nowrap"><button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>
+        ${travelBtn}${realMode() ? `<div class="row nowrap"><button class="btn accent" id="goroll">🎲 주사위 굴리기</button>${realBtn}</div>
           <div class="row nowrap"><button class="btn secondary" id="gomap">🗺️ 지도에서 직접 선택</button>${close}</div>`
         : `<div class="row">${close}<button class="btn accent" id="goroll">🎲 주사위 굴리기</button></div>`}`;
     }
     openModal(html, (root) => {
+      // 세계여행 버튼이 같이 있으면 '여행 안 하고 굴릴까요?'를 다시 묻지 않음
       root.querySelector('#goroll').onclick = () => {
         closeModal();
-        rollDice();
+        rollDice(travel || undefined);
       };
-      if (root.querySelector('#goreal')) root.querySelector('#goreal').onclick = () => realDiceDialog();
+      if (root.querySelector('#goreal')) root.querySelector('#goreal').onclick = () => realDiceDialog(travel || undefined);
+      if (root.querySelector('#gotravel')) root.querySelector('#gotravel').onclick = travelPick;
       if (root.querySelector('#gomap')) root.querySelector('#gomap').onclick = () => {
         closeModal();
         toast('게임판에서 말이 도착한 칸을 눌러 주세요.');
@@ -2319,6 +2325,8 @@
   let modalLock = null;
   function openModal(html, onMount, opts) {
     const lock = opts && opts.lock;
+    // 차례·더블 알림이 다른 창(세금 알림·카드 화면 등)에 덮이면, 그 창을 닫은 뒤 다시 띄움
+    if ($modal.querySelector('.myturn') && !html.includes('class="myturn')) turnShown = '';
     modalLock = lock || null;
     $modal.innerHTML = `<div class="modal-bg"><div class="modal">${lock ? '' : '<button class="x" data-close aria-label="닫기">✕</button>'}${html}</div></div>`;
     const root = $modal.firstElementChild.firstElementChild;
