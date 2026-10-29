@@ -377,6 +377,8 @@ function next(st, pid) {
     const target = travelTarget(st, p, reserve);
     if (target) return act({ type: 'travelTo', to: target.pos }, 2600);
   }
+  // 더블로 뽑은 세계여행 초대장: 갈 만한 도시가 있고 돈이 넉넉하면 다음 차례에 여행, 아니면 지금 한 번 더 굴림
+  if (t.invite && t.again && p.travel && p.money >= G.TRAVEL + reserve && travelTarget(st, p, reserve)) return act({ type: 'travelLater' });
   // 무인도: 탈출 카드 → 빈 땅이 많고 돈이 넉넉하면 보석금 → 아니면 쉬면서 더블 노리기 (늦게는 무인도가 안전)
   if (p.jail > 0 && !t.rolled) {
     if (p.card === 'escape') return act({ type: 'useEscape' });

@@ -646,3 +646,56 @@ test('앱 + 실물: 무인도에서 직접 진행하면 무인도에서 나온 �
   act(room, 'b', 'buy', { tileId: id('발리') });
   assert.strictEqual(room.players[1].jail, 0);
 });
+
+test('전염병·외계인 침공: 같은 색 도시 주인마다 방어를 따로 고르고, 막은 사람 도시만 빠짐', () => {
+  const room = g.createRoom('1', '선생님', 't', 'app', { play: false });
+  ['a', 'b', 'c'].forEach((x, i) => { g.addPlayer(room, '가나다'[i], x); g.applyAction(room, x, { type: 'pickColor', color: g.PIECES[i].color }); });
+  act(room, 't', 'start');
+  Object.assign(room, { phase: 'turns', order: ['a', 'b', 'c'] });
+  room.turn = { pid: 'a', rolled: true, again: false, doubles: 0, did: {} };
+  room.props[id('로마')] = { owner: 'b', built: { villa: true }, visits: 0 };
+  room.props[id('제네바')] = { owner: 'c', built: { villa: true }, visits: 0 };
+  room.props[id('모스크바')] = { owner: 'a', built: { villa: true }, visits: 0 };
+  room.players[1].card = 'shield';
+  room.players[2].card = 'angel';
+  room.players[0].use = 'alien';
+  act(room, 'a', 'alien', { tileId: id('로마') });
+  assert.strictEqual(room.turn.awaitDefense.victim, 'b');
+  act(room, 'b', 'defend', { use: true });
+  assert.strictEqual(room.turn.awaitDefense.victim, 'c'); // 다음 주인
+  act(room, 'c', 'defend', { use: false });
+  assert.ok(!room.turn.awaitDefense);
+  assert.ok(room.props[id('로마')].built.villa); // 막음
+  assert.ok(!room.props[id('제네바')].built.villa); // 안 막음
+  assert.ok(!room.props[id('모스크바')].built.villa); // 내 도시도 (룰북대로)
+  assert.strictEqual(room.players[2].card, 'angel');
+});
+
+test('더블로 뽑은 세계여행 초대장: 다음 차례에 여행(더블 끝) 또는 지금 한 번 더 굴림', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'mixed');
+  g.addPlayer(room, '아빠', 'b');
+  room.players.forEach((p, i) => g.applyAction(room, p.id, { type: 'pickColor', color: g.PIECES[i].color }));
+  act(room, 'a', 'start');
+  act(room, 'a', 'orderRoll', { sum: 3 });
+  act(room, 'b', 'orderRoll', { sum: 11 });
+  const b = room.players[1];
+  b.pos = 18;
+  act(room, 'b', 'roll', { dice: [1, 1] }); // 20 포춘카드, 더블
+  act(room, 'b', 'draw', { key: 'travelInvite' });
+  assert.strictEqual(b.pos, 24);
+  assert.ok(room.turn.again && room.turn.invite);
+  assert.ok(!g.canTravelNow(room, b)); // 지금 여행은 안 됨
+  assert.throws(() => act(room, 'b', 'endTurn'), /더블/);
+  act(room, 'b', 'travelLater');
+  act(room, 'b', 'endTurn');
+  assert.ok(b.travel);
+  // 다른 판: 여행 안 하고 굴리면 초대장은 없어짐
+  b.pos = 18; b.travel = false;
+  room.turn = { pid: 'b', rolled: false, again: false, doubles: 0 };
+  act(room, 'b', 'roll', { dice: [1, 1] });
+  room.players[0].card = null;
+  act(room, 'b', 'draw', { key: 'travelInvite' });
+  act(room, 'b', 'roll', { dice: [1, 2] });
+  assert.ok(!b.travel);
+  assert.strictEqual(b.pos, 27);
+});

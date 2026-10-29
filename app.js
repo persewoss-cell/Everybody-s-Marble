@@ -149,7 +149,7 @@
   }
 
   // 주사위를 굴리고 할 일을 한 뒤 차례를 끝낼지 물어봄
-  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'keepCard', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'passCard', 'timer', 'addBot', 'defend', 'useEscape'];
+  const NO_END_ASK = ['roll', 'orderRoll', 'endTurn', 'undo', 'move', 'travelTo', 'draw', 'kick', 'start', 'pickColor', 'reset', 'end', 'adjust', 'syncDone', 'botDraw', 'passCard', 'timer', 'addBot', 'defend', 'useEscape'];
   // 직접 진행 중: 차례 중간에 하는 일이면 끝낼지 묻지 않음 (월급·매각·송금·보석금·세계여행 비용 뒤엔 칸에서 할 일이 남음)
   const midTurn = (a) => ['salary', 'sell', 'transfer', 'move'].includes(a.type) || (a.type === 'pay' && a.what !== 'tax');
   // 한 번에 하나만 기다리도록 타이머 하나로 관리
@@ -1360,6 +1360,8 @@
   }
   const mineF = (t) => prop(t.id) && prop(t.id).owner === session.playerId;
   const theirsF = (t) => prop(t.id) && prop(t.id).owner !== session.playerId;
+  // 부술 건물(빌라·빌딩·호텔)이 있는 도시 (랜드마크 도시 제외) — 지진·외계인 침공
+  const breakable = (t) => { const pr = prop(t.id); return !!pr && !pr.built.landmark && ['villa', 'building', 'hotel'].some((k) => pr.built[k]); };
   const noLm = (t) => !(prop(t.id) && prop(t.id).built && prop(t.id).built.landmark);
   const shieldNote = () => '상대가 방패나 천사 카드를 갖고 있으면 막을지 상대가 골라요.';
 
@@ -1633,6 +1635,7 @@
     if (mine && t.owe === 'toll') btns.push('<button class="btn small accent" id="tpay">💸 통행료 내기</button>');
     if (mine && t.owe === 'tax') btns.push(`<button class="btn small accent" id="ttax">🧾 세금 ${fmt(G.TAX)} 내기</button>`);
     if (mine && startBuild()) btns.push('<button class="btn small secondary" id="tbuild">🏁 내 도시에 건물 짓기</button>');
+    if (mine && t.invite && t.again) btns.push('<button class="btn small accent" id="tlater">✈️ 다음 차례에 여행</button>');
     if (mine && t.mustDraw) btns.push('<button class="btn small accent" id="tdraw">🃏 포춘카드 뽑기</button>');
     if (mine && m.use) {
       btns.push(`<button class="btn small accent" id="tuse">🃏 ${G.CARD[m.use].name} 쓰기</button>`);
@@ -1654,6 +1657,7 @@
       : travelNow ? '세계여행! 갈 도시를 고르거나, 안 가고 주사위를 굴려요'
       : m.travel ? '세계여행 도착! 다음 차례에 갈 도시를 골라요'
       : m.jail > 0 && !t.rolled ? `무인도 (${m.jail}차례 남음): 더블·보석금·탈출 카드로 나와요`
+      : t.again && t.invite ? '세계여행 초대장: 다음 차례에 여행하거나, 안 하고 한 번 더 굴려요'
       : t.again ? (t.doubles >= 2 ? '더블 2번! 한 번 더 굴려요 (또 더블이면 무인도)' : '더블! 한 번 더 굴려요')
       : t.free ? '직접 진행 중: 실물로 말을 옮기고 도착한 칸을 누르세요. 다 했으면 차례 끝'
       : t.rolled ? '할 일을 마치면 차례 끝' : realMode() ? '주사위를 굴리세요 (직접 하려면 칸을 누르세요)' : '주사위를 굴리세요';
@@ -1817,6 +1821,13 @@
           ${m.card === 'escape' ? '<button class="btn secondary" id="goesc">🎫 탈출 카드 쓰기</button>' : ''}</div>
         ${m.money < G.BAIL ? `<div class="sub center">보석금 ${fmt(G.BAIL)}이 모자라요.</div>` : ''}
         ${mapBtn}<div class="row">${close}</div>`;
+    } else if (again && t.invite) {
+      // 더블로 뽑은 세계여행 초대장: 다음 차례에 여행(더블 끝) / 여행 안 하고 한 번 더
+      html = `<div class="myturn center"><h3>✈️ 세계여행 초대장 (더블)</h3>
+        <div class="sub">다음 차례에 여행하려면 더블은 여기서 끝나요. 여행을 안 하면 지금 한 번 더 굴려요.</div></div>
+        <div class="row nowrap"><button class="btn accent" id="golater">✈️ 다음 차례에 여행</button></div>
+        <div class="row nowrap"><button class="btn secondary" id="goroll">🎲 여행 안 하고 한 번 더</button>${realBtn}</div>
+        <div class="row">${close}</div>`;
     } else if (again) {
       html = `<div class="myturn center"><h3>🎲 더블이에요!${t.doubles >= 2 ? ' (2번째)' : ''}</h3><div class="sub">한 번 더 굴려요.</div>
         ${t.doubles >= 2 ? '<div class="warn">⚠️ 한 번 더 더블이 나오면 무인도로 이동해요!</div>' : ''}</div>
@@ -1837,6 +1848,7 @@
       };
       if (root.querySelector('#goreal')) root.querySelector('#goreal').onclick = () => realDiceDialog(travel || undefined);
       if (root.querySelector('#gotravel')) root.querySelector('#gotravel').onclick = travelPick;
+      if (root.querySelector('#golater')) root.querySelector('#golater').onclick = () => run({ type: 'travelLater' });
       if (root.querySelector('#gomap')) root.querySelector('#gomap').onclick = () => {
         closeModal();
         toast('게임판에서 말이 도착한 칸을 눌러 주세요.');
@@ -1864,6 +1876,7 @@
     const card = G.CARD[w.card];
     openModal(`<h3>⚔️ ${esc(att.name)}${att.bot ? ' 🤖' : ''}의 공격</h3>
       <p><b>${esc(G.TILE[w.tile].name)}</b>에 <b>${esc(G.CARD[w.type].name)}</b>! <span class="muted">(${esc(G.CARD[w.type].desc)})</span></p>
+      ${w.type === 'epidemic' || w.type === 'alien' ? `<div class="sub">같은 색 도시가 모두 걸려요. 막으면 내 도시(${G.BOARD.filter((x) => x.kind === 'city' && x.group === G.TILE[w.tile].group && prop(x.id) && prop(x.id).owner === session.playerId).map((x) => esc(x.name)).join('·')})만 빠져요.</div>` : ''}
       <div class="sub">보관 중인 <b>${card.name}</b> 카드로 막을까요? 막으면 카드는 반납돼요.</div>
       <div class="row"><button class="btn secondary" id="defn">안 막을래요</button><button class="btn accent" id="defy">${w.card === 'shield' ? '🛡️' : '😇'} ${card.name}로 막기</button></div>`, (root) => {
       root.querySelector('#defy').onclick = () => run({ type: 'defend', use: true }, { keepOpen: true });
@@ -1888,6 +1901,7 @@
     if (q('#tpay')) q('#tpay').onclick = () => { const sp = G.SPACES[state.turn.spot]; if (sp && sp.id) tileSheet(sp.id); };
     if (q('#ttax')) q('#ttax').onclick = autoTax;
     if (q('#tdraw')) q('#tdraw').onclick = fortuneDialog;
+    if (q('#tlater')) q('#tlater').onclick = () => run({ type: 'travelLater' });
     if (q('#tbuild')) q('#tbuild').onclick = startPick;
     if (q('#tuse')) q('#tuse').onclick = () => useCard(me().use);
     if (q('#tpass')) q('#tpass').onclick = () => confirmBox(`${G.CARD[me().use].name} 카드를 쓰지 않고 반납할까요?`, { type: 'passCard' }, '반납');
@@ -1962,9 +1976,9 @@
         if (freeTurn()) return run({ type: 'sponsor' }) && notice('🎁 후원금', '모두에게서 후원금을 받았어요. (10만이 없는 사람은 가진 만큼)');
         return notice('🎁 후원금', '모두에게서 후원금을 받았어요. (10만이 없는 사람은 가진 만큼)');
       case 'epidemic': return attack('epidemic', '😷 전염병', (t) => t.kind === 'city');
-      case 'alien': return attack('alien', '👽 외계인 침공', (t) => t.kind === 'city');
+      case 'alien': return attack('alien', '👽 외계인 침공', (t) => t.kind === 'city' && G.BOARD.some((x) => x.kind === 'city' && x.group === t.group && breakable(x)));
       case 'forceSell': return attack('forceSell', '🔨 강제매각', noLm);
-      case 'quake': return attack('quake', '🌋 지진', (t) => t.kind === 'city' && noLm(t));
+      case 'quake': return attack('quake', '🌋 지진', (t) => t.kind === 'city' && noLm(t) && breakable(t));
       case 'blackout': return attack('blackout', '⚡ 도시정전', () => true);
       case 'dust': return attack('dust', '🌫️ 황사', () => true);
       case 'swap': return swapDialog();
