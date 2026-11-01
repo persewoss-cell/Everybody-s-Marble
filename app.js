@@ -487,7 +487,7 @@
   function renderHome() {
     const params = new URLSearchParams(location.search);
     $app.innerHTML = `${topbar()}<div class="wrap narrow">
-      <div class="hero"><div class="logo">🎲💰</div><h1>모두의 마블 보조앱</h1><p>보드게임 돈 계산을 각자 휴대폰·태블릿으로</p></div>
+      <div class="hero"><img class="logo" src="icon-192.png" alt="" width="96" height="96"><h1>모두의 마블 보조앱</h1><p>보드게임 돈 계산을 각자 휴대폰·태블릿으로</p></div>
       <div class="card">
         <label class="field"><span>내 이름</span><input type="text" id="name" maxlength="12" placeholder="예: 홍길동" value="${esc(lastName())}"></label>
         <div class="sub">튕겼다면 같은 이름으로 같은 방에 들어가면 그대로 이어져요.</div>
