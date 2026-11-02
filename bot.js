@@ -15,6 +15,19 @@ const MAN = G.MAN;
 const CFG = { base: 10, near: 0.3, board: 0.2, expect: 1, land: 0.3, build: 0.4, take: 1.2, floorLand: 10, floorBuild: 20, rich: 60, richK: 1.5 };
 const done = new Set(); // 이번 도착에서 이미 생각해 본 일 (같은 칸에서 되풀이하지 않게)
 
+// 실력: 상은 위 판단 그대로, 하는 소극적(돈을 많이 남기고 인수·건설을 덜 함)이고 가끔 실수(중요한 땅을 지나치거나
+// 공격 대상을 아무렇게나), 중은 그 절반. W = 서툰 정도 (상 0 · 중 0.5 · 하 1)
+const LEVEL_W = { hard: 0, mid: 0.5, easy: 1 };
+let W = 0;
+let SEED = '';
+// 같은 상황에서는 늘 같은 결과 (방장 기기가 여러 번 물어도 생각이 바뀌지 않게)
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
+}
+const chance = (tag, prob) => prob > 0 && hash(SEED + ':' + tag) < prob;
+
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 const act = (action, wait) => ({ action, wait: wait || 1600 });
 const DICE_P = (s) => (6 - Math.abs(s - 7)) / 36; // 두 주사위 합이 s일 확률
@@ -247,6 +260,8 @@ function useCard(st, p, reserve) {
     blackout: (t) => toll(st, t) * soon(t) * targetWeight(t),
     dust: (t) => toll(st, t) * soon(t) * targetWeight(t),
   }[key];
+  // 서툴면 공격 대상을 아무렇게나 고름
+  if (chance('randTarget', 0.7 * W)) return act({ type: key, tileId: list[Math.floor(hash(SEED + 'tg') * list.length)].id });
   return act({ type: key, tileId: pick(list, score)[0].id });
 }
 
@@ -279,7 +294,10 @@ function next(st, pid) {
   if (t.awaitSync) return null; // 앞 컴퓨터 결과를 사람이 실물 게임판에 반영하는 중
   if (t.awaitDefense) return null; // 공격받은 사람이 방패·천사를 쓸지 고르는 중
   const key = `${st.code}:${pid}:${landId(st)}`;
-  const reserve = reserveOf(st, p);
+  W = LEVEL_W[p.level] !== undefined ? LEVEL_W[p.level] : LEVEL_W.mid;
+  SEED = key;
+  const reserve = reserveOf(st, p) * (1 + 0.8 * W); // 서툴수록 돈을 많이 남겨 둠 (소극적)
+  const budget = (c) => buildBudget(st, p, c, reserve) * (1 - 0.4 * W);
 
   // 보관 카드가 2장이면 지금 더 쓸모 있는 것
   if (p.pendingCard) {
@@ -295,7 +313,7 @@ function next(st, pid) {
     const opts = {};
     // 천사·할인쿠폰: 큰 통행료나 돈이 모자랄 때 씀 (작은 통행료엔 아껴 둠)
     const big = base >= 15 * MAN || base > p.money * 0.3 || base > p.money;
-    if (p.card === 'angel' && big) opts.angel = true;
+    if (p.card === 'angel' && (big || chance('angel', 0.6 * W))) opts.angel = true; // 서툴면 작은 통행료에도 써 버림
     else if (p.card === 'coupon' && (big || base >= 8 * MAN)) opts.coupon = true;
     const amount = G.tollInfo(st, tile.id, opts).amount;
     if (p.money < amount) return raise(st, p, amount, owner);
@@ -317,38 +335,42 @@ function next(st, pid) {
     const pr = st.props[at.id];
     if (!pr && once(key + ':buy')) {
       const price = at.kind === 'tour' ? G.TOUR_PRICE : at.cost.land;
-      const win = winsWith(st, pid, at);
-      const value = progressValue(st, pid, at) + blockValue(st, pid, at);
+      const win = winsWith(st, pid, at) && !chance('missWin', 0.3 * W);
+      // 서툴면 독점·막기 같은 중요한 땅인 줄 모르고 지나치기도
+      const value = chance('noValue', 0.6 * W) ? 0 : progressValue(st, pid, at) + blockValue(st, pid, at);
       // 이기면 무조건, 중요한 땅이면 비상금을 덜 남겨도, 그 밖엔 비상금을 남길 수 있을 때만
       const need = win ? 0 : Math.max(CFG.floorLand * MAN, (value >= 3 ? reserve * 0.3 : value >= 1 ? reserve * 0.6 : reserve) * CFG.land);
-      if (p.money - price >= need) {
-        const items = buildPlan(st, p, at, buildBudget(st, p, at, reserve) - price, true).items;
+      // 서툴면 별것 아닌 땅은 망설이다 안 사기도
+      if (p.money - price >= need && (win || value >= 1 || !chance('skipBuy', 0.3 * W))) {
+        const items = chance('buyOnly', 0.4 * W) ? [] : buildPlan(st, p, at, budget(at) - price, true).items;
         return act({ type: 'buy', tileId: at.id, items });
       }
     } else if (pr && pr.owner === pid) {
       if ((at.tour === 'beach' || st.effects[at.id]) && !did.arrive && !did.bought) return act({ type: 'arrive', tileId: at.id });
-      if (at.kind === 'city' && once(key + ':build')) {
-        const plan = buildPlan(st, p, at, buildBudget(st, p, at, reserve));
+      if (at.kind === 'city' && once(key + ':build') && !chance('noBuild', 0.35 * W)) {
+        const plan = buildPlan(st, p, at, budget(at));
         if (plan.items.length) return act({ type: 'build', tileId: at.id, items: plan.items });
       }
     } else if (pr && t.paid === at.id && at.kind === 'city' && !isLandmark(st, at) && once(key + ':take')) {
       // 인수: 이기면 무조건, 내 독점·상대 막기면 조금 무리해서, 그 밖엔 돈이 넉넉하고 통행료가 쏠쏠할 때만
       const price = G.takeoverPrice(st, at.id);
       const owner = st.players.find((x) => x.id === pr.owner);
-      const win = winsWith(st, pid, at);
+      const win = winsWith(st, pid, at) && !chance('missWinTake', 0.3 * W);
       const value = progressValue(st, pid, at) + blockValue(st, pid, at) + (owner && G.hasMonopoly(st, owner.id, at.group) ? 1.5 : 0);
       const need = win ? 0 : value >= 3 ? reserve * 0.5 : value >= 1 ? reserve : reserve * CFG.take;
       // 돈이 넉넉하면(인수하고도 비상금의 몇 배가 남으면) 통행료가 작아도 인수 — 땅이 늘면 통행료·독점 기회가 늘고 상대 땅은 줄어듦
       const rich = p.money - price >= Math.max(reserve * CFG.richK, CFG.rich * MAN);
       const worth = win || value >= 1 || toll(st, at) >= price * 0.25 || rich;
-      if (worth && p.money - price >= need) return act({ type: 'takeover', tileId: at.id });
+      // 서툴면 인수는 거의 안 함 (이기는 수는 가끔만 놓침)
+      const shy = !win && chance('noTake', 0.85 * W);
+      if (worth && !shy && p.money - price >= need) return act({ type: 'takeover', tileId: at.id });
     }
   }
   if (at && at.key === 'start' && !did.startBuild && once(key + ':start')) {
     // 출발지 도착: 내 도시 중 지으면 가장 좋은 곳 한 곳에
     let best = null;
     for (const c of owned(st, pid, (x) => x.kind === 'city')) {
-      const plan = buildPlan(st, p, c, buildBudget(st, p, c, reserve));
+      const plan = buildPlan(st, p, c, budget(c));
       const s = plan.items.reduce((sum, k) => sum + c.toll[k], 0) * buildWorth(st, pid, c);
       if (plan.items.length && (!best || s > best.s)) best = { c, plan, s };
     }
@@ -356,7 +378,7 @@ function next(st, pid) {
   }
   if (at && at.key === 'olympic' && !did.olympic && once(key + ':olympic')) {
     const cities = owned(st, pid, (x) => x.kind === 'city' && olympicOk(st, x));
-    if (cities.length && p.money - G.OLYMPIC_COST >= reserve) {
+    if (cities.length && p.money - G.OLYMPIC_COST >= reserve && !chance('noOlympic', 0.5 * W)) {
       const best = cities.sort((a, b) => toll(st, b) * buildWorth(st, pid, b) - toll(st, a) * buildWorth(st, pid, a))[0];
       if (toll(st, best) >= 5 * MAN) return act({ type: 'olympic', tileId: best.id });
     }
@@ -374,7 +396,9 @@ function next(st, pid) {
 
   // 세계여행: 갈 만한 도시가 있으면 가고, 없으면 주사위
   if (G.canTravelNow(st, p) && once(key + ':travel')) {
-    const target = travelTarget(st, p, reserve);
+    const target = chance('randTravel', 0.5 * W) && p.money >= G.TRAVEL
+      ? G.BOARD.filter((x) => !ownerOf(st, x.id) || ownerOf(st, x.id) === pid)[Math.floor(hash(SEED + 'tv') * 18)] || travelTarget(st, p, reserve)
+      : travelTarget(st, p, reserve);
     if (target) return act({ type: 'travelTo', to: target.pos }, 2600);
   }
   // 더블로 뽑은 세계여행 초대장: 갈 만한 도시가 있고 돈이 넉넉하면 다음 차례에 여행, 아니면 지금 한 번 더 굴림
@@ -383,7 +407,7 @@ function next(st, pid) {
   if (p.jail > 0 && !t.rolled) {
     if (p.card === 'escape') return act({ type: 'useEscape' });
     const free = G.BOARD.filter((x) => !ownerOf(st, x.id)).length;
-    if (free >= 8 && p.money - G.BAIL >= reserve + 20 * MAN && once(key + ':bail')) return act({ type: 'pay', what: 'bail' });
+    if (free >= 8 && p.money - G.BAIL >= reserve + 20 * MAN && !chance('noBail', 0.8 * W) && once(key + ':bail')) return act({ type: 'pay', what: 'bail' });
   }
   if (!t.rolled || t.again) {
     const dice = [d6(), d6()];

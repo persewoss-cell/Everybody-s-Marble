@@ -991,7 +991,7 @@ const actions = {
   },
 
   // 방장: 컴퓨터 플레이어 추가 (앱으로만 하는 방, 대기실에서). 컴퓨터 차례는 방장 기기가 대신 진행
-  addBot(room, actorId) {
+  addBot(room, actorId, a) {
     requireHost(room, actorId);
     if (room.status !== 'lobby') throw new GameError('게임 시작 전에만 컴퓨터를 추가할 수 있어요.');
     if (room.players.length >= MAX_PLAYERS) throw new GameError(`최대 ${MAX_PLAYERS}명까지 참가할 수 있습니다.`);
@@ -999,7 +999,17 @@ const actions = {
     while (room.players.some((p) => p.name === `컴퓨터${n}`)) n++;
     let id;
     do id = 'bot' + Math.random().toString(36).slice(2, 8); while (room.players.some((p) => p.id === id));
-    room.players.push({ id, name: `컴퓨터${n}`, color: null, money: 0, laps: 0, pos: 0, bankrupt: false, bot: true });
+    const level = BOT_LEVELS.includes(a && a.level) ? a.level : 'mid';
+    room.players.push({ id, name: `컴퓨터${n}`, color: null, money: 0, laps: 0, pos: 0, bankrupt: false, bot: true, level });
+  },
+
+  // 방장: 컴퓨터 실력 (상 hard · 중 mid · 하 easy)
+  botLevel(room, actorId, a) {
+    requireHost(room, actorId);
+    const p = getPlayer(room, a.playerId);
+    if (!p.bot) throw new GameError('컴퓨터만 실력을 정할 수 있어요.');
+    if (!BOT_LEVELS.includes(a.level)) throw new GameError('상·중·하 중에 골라 주세요.');
+    p.level = a.level;
   },
 
   kick(room, actorId, a) {
@@ -1498,7 +1508,8 @@ const FREE_START = ['buy', 'build', 'arrive', 'toll', 'takeover', 'pay', 'salary
 
 // 컴퓨터 결과를 실물 게임판에 반영하기 전에는 다음 사람이 할 수 없는 것
 const TURN_ACTIONS = ['roll', 'travelTo', 'travelLater', 'endTurn', 'draw', 'pay', 'useEscape', 'sell', ...TILE_ACTIONS, 'olympic', 'bonus', 'passCard'];
-const MANAGER_ACTIONS = ['defend', 'syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
+const BOT_LEVELS = ['hard', 'mid', 'easy'];
+const MANAGER_ACTIONS = ['botLevel', 'defend', 'syncDone', 'botDraw', 'addBot', 'start', 'kick', 'adjust', 'bankrupt', 'end', 'reset', 'undo', 'endTurn', 'move', 'timer'];
 
 // 방장이 아닌 사람은 규칙에 맞는 때·칸에서만. 방장은 잘못을 바로잡을 수 있게 그대로 둠
 const ATTACKS = ['epidemic', 'alien', 'forceSell', 'quake', 'blackout', 'dust', 'swap', 'donate'];
@@ -1671,8 +1682,8 @@ function publicState(room) {
     orderScore: room.orderScore || {},
     order: room.order || [],
     turn: room.turn || null,
-    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt, jail, travel, card, pendingCard, use, bot }) =>
-      ({ id, name, color, money, laps, pos: pos || 0, bankrupt, jail: jail || 0, travel: !!travel, card: card || null, pendingCard: pendingCard || null, use: use || null, bot: !!bot })),
+    players: room.players.map(({ id, name, color, money, laps, pos, bankrupt, jail, travel, card, pendingCard, use, bot, level }) =>
+      ({ id, name, color, money, laps, pos: pos || 0, bankrupt, jail: jail || 0, travel: !!travel, card: card || null, pendingCard: pendingCard || null, use: use || null, bot: !!bot, ...(bot ? { level: level || 'mid' } : {}) })),
     props: room.props,
     olympic: room.olympic,
     festival: room.festival,
@@ -1693,7 +1704,7 @@ function roomFromPublic(state) {
 
 const api = {
   MAN, START_MONEY, SALARY, BAIL, TAX, TRAVEL, OLYMPIC_COST, SPONSOR, BONUS, TOUR_PRICE, TOUR_TOLL, TOUR_SELL,
-  MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, turnsOn, managed, travelOk, canTravelNow, canDonate, assetValue, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
+  BOT_LEVELS, MAX_PLAYERS, MAX_OLYMPIC, BOARD, TILE, SPACES, POS, PIECES, FORTUNE, CARD, KEEP, USE_CARDS, USE_ACTION, turnsOn, managed, travelOk, canTravelNow, canDonate, assetValue, deck, GROUPS, LINE_NAMES, BUILDINGS, ITEM_NAMES, TOUR_LEVELS,
   GameError, createRoom, addPlayer, findByName, applyAction, publicState, roomFromPublic,
   fmt, tollInfo, takeoverPrice, sellPrice, tourLevel, hasMonopoly, canBuild, maxBuilding, builtItems, lastUndoable,
 };

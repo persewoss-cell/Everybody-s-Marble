@@ -9,7 +9,7 @@ function play(seedGames) {
   const stats = { ended: 0, errors: [], steps: 0, reasons: {} };
   for (let n = 0; n < seedGames; n++) {
     const room = g.createRoom('1', '선생님', 't', 'app', { play: false });
-    for (let i = 0; i < 4; i++) g.applyAction(room, 't', { type: 'addBot' });
+    for (let i = 0; i < 4; i++) g.applyAction(room, 't', { type: 'addBot', level: 'hard' });
     g.applyAction(room, 't', { type: 'start' });
     let idle = 0;
     for (let step = 0; step < 4000 && room.status === 'playing'; step++) {
@@ -49,8 +49,8 @@ test('컴퓨터끼리 게임: 멈추지 않고, 규칙 오류 없이 진행', ()
 test('컴퓨터 추가는 방장만, 시작하면 남은 색', () => {
   const room = g.createRoom('1', '엄마', 'a', 'app');
   g.addPlayer(room, '아빠', 'b');
-  assert.throws(() => g.applyAction(room, 'b', { type: 'addBot' }), /방장/);
-  g.applyAction(room, 'a', { type: 'addBot' });
+  assert.throws(() => g.applyAction(room, 'b', { type: 'addBot', level: 'hard' }), /방장/);
+  g.applyAction(room, 'a', { type: 'addBot', level: 'hard' });
   assert.strictEqual(room.players[2].name, '컴퓨터1');
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'b', { type: 'pickColor', color: g.PIECES[1].color });
@@ -61,7 +61,7 @@ test('컴퓨터 추가는 방장만, 시작하면 남은 색', () => {
 test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람도 규칙대로(실물 주사위 입력), 컴퓨터 결과 반영 확인', () => {
   const room = g.createRoom('1', '엄마', 'a', 'mixed');
   g.addPlayer(room, '아빠', 'b');
-  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'addBot', level: 'hard' });
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'b', { type: 'pickColor', color: g.PIECES[1].color });
   g.applyAction(room, 'a', { type: 'start' });
@@ -108,7 +108,7 @@ test('앱 + 실물 + 컴퓨터: 순서 정하기(실물 숫자 가능), 사람�
 // 컴퓨터 차례로 만들고 그 칸에 도착한 상태
 function botAt(tileName, money) {
   const room = g.createRoom('1', '엄마', 'a', 'app');
-  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'addBot', level: 'hard' });
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'a', { type: 'start' });
   const b = room.players[1];
@@ -159,7 +159,7 @@ test('컴퓨터: 돈이 적으면 땅·건물을 사지 않고, 짓더라도 최
 
 test('앱 + 실물 + 컴퓨터: 사람이 앱 주사위로 더블이면 차례를 못 끝내고 한 번 더', () => {
   const room = g.createRoom('1', '엄마', 'a', 'mixed');
-  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'addBot', level: 'hard' });
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'a', { type: 'start' });
   g.applyAction(room, 'a', { type: 'orderRoll', dice: [6, 6] });
@@ -176,7 +176,7 @@ test('앱 + 실물 + 컴퓨터: 사람이 앱 주사위로 더블이면 차례�
 
 test('앱 + 실물 + 컴퓨터: 컴퓨터가 포춘카드 칸에 서면 사람이 랜덤 또는 실물 카드로 정해 줌', () => {
   const room = g.createRoom('1', '엄마', 'a', 'mixed');
-  g.applyAction(room, 'a', { type: 'addBot' });
+  g.applyAction(room, 'a', { type: 'addBot', level: 'hard' });
   g.applyAction(room, 'a', { type: 'pickColor', color: g.PIECES[0].color });
   g.applyAction(room, 'a', { type: 'start' });
   const c = room.players[1];
@@ -205,4 +205,16 @@ test('컴퓨터: 해변 관광지를 산 그 도착은 방문으로 치지 않�
   assert.notStrictEqual(s2.action.type, 'arrive');
   assert.throws(() => g.applyAction(room, b.id, { type: 'arrive', tileId: t.id }), /방문으로 치지 않아요/);
   assert.strictEqual(g.tourLevel(room, t), 0);
+});
+
+test('컴퓨터 실력 상·중·하: 처음엔 중, 방장만 바꿈', () => {
+  const room = g.createRoom('1', '엄마', 'a', 'app');
+  g.addPlayer(room, '아빠', 'b');
+  g.applyAction(room, 'a', { type: 'addBot' });
+  const c = room.players[2];
+  assert.strictEqual(c.level, 'mid');
+  assert.throws(() => g.applyAction(room, 'b', { type: 'botLevel', playerId: c.id, level: 'easy' }), /방장/);
+  assert.throws(() => g.applyAction(room, 'a', { type: 'botLevel', playerId: 'b', level: 'easy' }), /컴퓨터만/);
+  g.applyAction(room, 'a', { type: 'botLevel', playerId: c.id, level: 'easy' });
+  assert.strictEqual(g.publicState(room).players[2].level, 'easy');
 });

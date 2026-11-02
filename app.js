@@ -51,7 +51,14 @@
   const pc = (p) => (p && p.color) || '#a9b0c0';
   // 2명 이상, 사람은 모두 말 색을 골랐을 때 (컴퓨터는 시작할 때 남은 색)
   const readyToStart = (st) => st.players.length >= 2 && st.players.every((p) => p.color || p.bot);
-  const BOT_TAG = '<span class="tag bot">🤖 컴퓨터</span>';
+  // 컴퓨터 실력: 상 hard · 중 mid · 하 easy
+  const LEVEL_NAME = { hard: '상', mid: '중', easy: '하' };
+  const botTag = (p, short) => `<span class="tag bot">🤖${short ? '' : ' 컴퓨터'} ${LEVEL_NAME[p.level] || '중'}</span>`;
+  // 방장: 대기실에서 컴퓨터 실력 고르기 (내보내기 옆)
+  const levelChips = (p) => `<span class="lvl">${G.BOT_LEVELS.map((l) => `<button class="chip ${(p.level || 'mid') === l ? 'on' : ''}" data-lvl="${l}" data-pid="${p.id}">${LEVEL_NAME[l]}</button>`).join('')}</span>`;
+  function bindLevels() {
+    $app.querySelectorAll('[data-lvl]').forEach((b) => (b.onclick = () => run({ type: 'botLevel', playerId: b.dataset.pid, level: b.dataset.lvl })));
+  }
   // 앱 + 실물 방: 차례·돈·규칙은 앱이 관리하고, 주사위·포춘카드는 실물로 해서 입력해도 됨.
   // 차례가 끝나면 실물 게임판에 옮길 것을 알려 줌
   const realMode = () => !!state && state.mode !== 'app';
@@ -413,6 +420,8 @@
     if (state.status === 'lobby') return renderLobby();
     if (!anim.busy) setTimeout(scanAnimations, 0);
     if (state.status === 'playing') return renderGame();
+    if (state.status === 'ended' && reviewing) return renderReview();
+    reviewing = false;
     return renderEnded();
   }
 
@@ -663,6 +672,7 @@
     const e = T.rooms[code];
     if (!e || !e.state) return;
     T.focus = code;
+    reviewing = false;
     session = e.session;
     conn = e.conn;
     state = serverState = e.state;
@@ -801,8 +811,8 @@
         <div class="row timerrow"><span>${limitText(state)}</span><button class="btn small secondary" id="timer">게임 시간 정하기</button></div></div>
       <div class="card"><h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li><span class="dot" style="background:${pc(p)}"></span>
-          <span class="name">${esc(p.name)}${p.bot ? BOT_TAG : p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
-          <button class="link" data-kick="${p.id}">내보내기</button></li>`).join('') || '<li class="muted">아직 아무도 안 들어왔어요.</li>'}</ul>
+          <span class="name">${esc(p.name)}${p.bot ? botTag(p) : p.color ? '' : '<span class="tag">색 고르는 중</span>'}</span>
+          ${p.bot ? levelChips(p) : ''}<button class="link" data-kick="${p.id}">내보내기</button></li>`).join('') || '<li class="muted">아직 아무도 안 들어왔어요.</li>'}</ul>
         ${botButton(true)}</div>
       <button class="btn accent" id="start" ${ready ? '' : 'disabled'}>게임 시작</button>
       <button class="btn secondary mt" id="back2">← 전체 보기</button>
@@ -814,6 +824,7 @@
     $app.querySelector('#start').onclick = () => run({ type: 'start' });
     $app.querySelector('#back2').onclick = teacherBack;
     bindBotButton();
+    bindLevels();
     $app.querySelector('#timer').onclick = () => timerDialog();
   }
 
@@ -836,7 +847,7 @@
       <section class="g-players"><div class="card"><ul class="plist">${state.players.map((p) => {
         const turn = t && t.pid === p.id;
         return `<li class="${turn ? 'now' : ''}"><span class="dot" style="background:${pc(p)}"></span>
-          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? '<span class="tag bot">🤖</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
+          <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? botTag(p, true) : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
           <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
           <span class="money">${fmt(p.money)}</span></li>`;
       }).join('')}</ul></div></section>
@@ -872,8 +883,8 @@
         <h2>참가자 ${state.players.length}/4</h2>
         <ul class="plist">${state.players.map((p) => `<li>
           <span class="dot" style="background:${pc(p)}"></span>
-          <span class="name">${esc(p.name)}${p.bot ? BOT_TAG : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${p.id === session.playerId ? '<span class="tag">나</span>' : ''}</span>
-          ${host && p.id !== state.hostId ? `<button class="link" data-kick="${p.id}">내보내기</button>` : ''}
+          <span class="name">${esc(p.name)}${p.bot ? botTag(p) : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${p.id === session.playerId ? '<span class="tag">나</span>' : ''}</span>
+          ${host && p.bot ? levelChips(p) : ''}${host && p.id !== state.hostId ? `<button class="link" data-kick="${p.id}">내보내기</button>` : ''}
         </li>`).join('')}</ul>
         ${botButton(host)}
       </div>
@@ -895,6 +906,7 @@
     if (host) $app.querySelector('#start').onclick = () => run({ type: 'start' });
     if (host) $app.querySelector('#timer').onclick = () => timerDialog();
     bindBotButton();
+    bindLevels();
     $app.querySelector('#leave').onclick = () => confirmBox(host ? '방을 닫을까요? 다른 사람도 나가게 돼요.' : '방에서 나갈까요?', async () => {
       if (conn) await conn.leave();
       goHome();
@@ -1041,7 +1053,7 @@
             const turn = state.turn && state.turn.pid === p.id;
             return `<li class="${turn ? 'now' : ''}">
             <span class="dot" style="background:${pc(p)}"></span>
-            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? '<span class="tag bot">🤖</span>' : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
+            <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? botTag(p, true) : ''}${p.id === state.hostId ? '<span class="tag">방장</span>' : ''}${turn ? '<span class="tag now">차례</span>' : ''}</span>
             <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
             <span class="money">${fmt(p.money)}</span>
           </li>`;
@@ -2298,6 +2310,37 @@
     return r.detail ? `<div class="sub">${esc(r.detail)}</div>` : '';
   }
 
+  // 게임이 끝난 뒤 게임판 다시 보기 (끝나기 직전 모습 그대로, 칸을 눌러 살펴보기만)
+  let reviewing = false;
+  function renderReview() {
+    const r = state.result || {};
+    const w = player(r.winnerId);
+    $app.innerHTML = `${topbar()}<div class="game ${view}">
+      <section class="g-board"><div class="board ${view === 'real' ? '' : 'card'}">${boardHtml()}</div></section>
+      <section class="g-side">
+        <div class="card turnbar"><span class="dot" style="background:${pc(w)}"></span><b>🏆 ${esc(w ? w.name : '')} 승리</b>
+          <span class="muted">${esc(r.reason || '')} · 끝난 게임판을 둘러보는 중 (칸을 누르면 자세히)</span></div>
+        <div class="row ctrl"><button class="btn accent" id="toresult">🏆 결과 화면으로</button>
+          <button class="btn secondary" id="view">${view === 'real' ? '카드버전' : '실제버전'}</button></div>
+      </section>
+      <section class="g-players"><div class="card"><ul class="plist">${state.players.map((p) => `<li>
+        <span class="dot" style="background:${pc(p)}"></span>
+        <span class="name ${p.bankrupt ? 'out' : ''}">${esc(p.name)}${p.bot ? botTag(p, true) : ''}${p.id === r.winnerId ? '<span class="tag now">승리</span>' : ''}</span>
+        <span class="muted">${p.bankrupt ? '파산' : `${p.laps + 1}턴 · 땅 ${myTiles(p.id).length}`}</span>
+        <span class="money">${fmt(p.money)}</span></li>`).join('')}</ul></div></section>
+      <section class="g-log card"><div class="loghead"><h2>기록</h2></div><div class="logscroll">${logHtml()}</div></section>
+    </div>`;
+    bindTop();
+    // 칸 정보만 보기 (끝난 게임이라 거래 버튼은 나오지 않음)
+    if (me()) bindBoard($app);
+    $app.querySelector('#toresult').onclick = () => { reviewing = false; closeModal(); render(); };
+    $app.querySelector('#view').onclick = () => {
+      view = view === 'real' ? 'card' : 'real';
+      try { localStorage.setItem('marble-view', view); } catch {}
+      render();
+    };
+  }
+
   function renderEnded() {
     const r = state.result || {};
     const res = Object.fromEntries(state.players.map((p) => [p.id, resultOf(p)]));
@@ -2320,11 +2363,13 @@
         </div>`;
       }).join('')}
       ${canUndo ? '<div class="center mt"><button class="btn small secondary" id="undo">↩ 잘못 끝났으면 되돌리기</button></div>' : ''}
+      <button class="btn secondary mt" id="review">🔍 게임판 다시 보기</button>
       ${isHost() ? '<button class="btn accent mt" id="again">같은 사람들과 다시 하기</button>' : ''}
       <button class="btn secondary mt" id="home">${teacher ? '← 전체 보기' : '처음으로'}</button>
     </div>`;
     bindTop();
     if ($app.querySelector('#undo')) $app.querySelector('#undo').onclick = undoDialog;
+    $app.querySelector('#review').onclick = () => { reviewing = true; window.scrollTo(0, 0); render(); };
     if (isHost()) $app.querySelector('#again').onclick = () => confirmBox('새 게임을 준비할까요? (기록이 지워져요)', { type: 'reset' });
     $app.querySelector('#home').onclick = () => {
       if (teacher) return teacherBack();
@@ -2482,7 +2527,7 @@
     if (!host) return '';
     const full = state.players.length >= 4;
     return `<button class="btn secondary small mt" id="addbot" ${full ? 'disabled' : ''}>🤖 컴퓨터 추가</button>
-      <div class="sub">컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.${state.mode === 'app' ? ''
+      <div class="sub">컴퓨터 실력은 상·중·하 중에 고를 수 있어요 (처음엔 중). 컴퓨터 차례는 ${teacher ? '이 컴퓨터' : '방장 기기'}가 자동으로 진행해요. 말 색은 시작할 때 남은 색으로 정해져요.${state.mode === 'app' ? ''
         : ' 컴퓨터 차례가 끝나면 실물 게임판에 옮길 것을 알려 줘요. 확인을 누르면 다음 차례로 넘어가요.'}</div>`;
   }
   function bindBotButton() {
